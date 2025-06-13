@@ -80,7 +80,7 @@ echo "Deploying CDK infrastructure to AWS account ${AWS_ACCOUNT_ID} in region ${
 npx cdk deploy "--context" "stage=$STAGE" "--require-approval" "never" "--outputs-file" "cdk-outputs.json"
 
 # Extract CloudFront distribution ID from outputs
-export CLOUDFRONT_DISTRIBUTION_ID=$(jq -r ".[\"image-gen-${STAGE}\"].CloudFrontDistributionId" "cdk-outputs.json")
+export CLOUDFRONT_DISTRIBUTION_ID=$(jq -r ".[\"media-library-${STAGE}\"].CloudFrontDistributionId" "cdk-outputs.json")
 
 ./s3-sync.sh
 
