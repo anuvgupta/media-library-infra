@@ -1,0 +1,15 @@
+{
+    "domainName": "media-dev.anuv.me",
+    "apiDomainName": "media-api-dev.anuv.me",
+    "stackNamePrefix": "media-library",
+    "awsAccountId": "738123590383",
+    "awsWebsiteBucketPrefix": "media-library-website",
+    "awsCacheBucketPrefix": "media-library-cache",
+    "frontendRepo": "anuvgupta/media-library-frontend",
+    "enableFirewall": false,
+    "throttlingConfig": {},
+    "tags": {
+        "Environment": "Development",
+        "Project": "MediaLibrary"
+    }
+}
