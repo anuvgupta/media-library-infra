@@ -23,6 +23,7 @@
                 "ecr:DescribeRepositories",
                 "ecr:PutLifecyclePolicy",
                 "ecr:GetLifecyclePolicy",
+                "ecr:PutImageTagMutability",
                 "ecr:TagResource",
                 "ecr:UntagResource",
                 "ecr:SetRepositoryPolicy",
