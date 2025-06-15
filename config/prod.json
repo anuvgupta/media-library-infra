@@ -4,13 +4,13 @@
     "stackNamePrefix": "media-library",
     "awsAccountId": "738123590383",
     "awsWebsiteBucketPrefix": "media-library-website",
-    "awsOutputBucketPrefix": "media-library-output",
-    "awsInputBucketPrefix": "media-library-input",
+    "awsMediaBucketPrefix": "media-library-media",
+    "awsPlaylistBucketPrefix": "media-library-playlist",
     "frontendRepo": "anuvgupta/media-library-frontend",
     "enableFirewall": false,
     "throttlingConfig": {},
     "tags": {
-        "Environment": "Development",
+        "Environment": "Production",
         "Project": "MediaLibrary"
     }
 }

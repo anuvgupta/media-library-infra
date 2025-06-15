@@ -22,7 +22,8 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     stageName: string;
     domainName: string;
     apiDomainName: string;
-    awsCacheBucketPrefix: string;
+    awsMediaBucketPrefix: string;
+    awsPlaylistBucketPrefix: string;
     awsWebsiteBucketPrefix: string;
     enableFirewall: boolean;
     throttlingConfig: any;
@@ -57,10 +58,11 @@ export class MediaLibraryStack extends cdk.Stack {
             objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
         });
 
-        /* S3 BUCKETS - CACHE BUCKET */
+        /* S3 BUCKETS - MEDIA BUCKET */
         // Input bucket for media cache
-        const cacheBucket = new s3.Bucket(this, "MediaLibraryCacheBucket", {
-            bucketName: `${props.awsCacheBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
+        const mediaBucket = new s3.Bucket(this, "MediaLibraryMediaBucket", {
+            bucketName: `${props.awsMediaBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
+            publicReadAccess: false,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -86,14 +88,62 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             ],
         });
-        // Upload restriction - CORS origin
-        cacheBucket.addCorsRule({
-            allowedMethods: [
-                s3.HttpMethods.PUT,
-                s3.HttpMethods.POST,
-                // s3.HttpMethods.GET,
-                // s3.HttpMethods.HEAD,
-            ],
+        // // Upload restriction - CORS origin
+        // mediaBucket.addCorsRule({
+        //     allowedMethods: [
+        //         s3.HttpMethods.PUT,
+        //         s3.HttpMethods.POST,
+        //         // s3.HttpMethods.GET,
+        //         // s3.HttpMethods.HEAD,
+        //     ],
+        //     allowedOrigins: [allowedOrigin],
+        //     allowedHeaders: ["*"],
+        //     exposedHeaders: ["ETag"],
+        //     maxAge: 3000,
+        // });
+
+        /* S3 BUCKETS - PLAYLIST BUCKET */
+        const playlistBucket = new s3.Bucket(
+            this,
+            "MediaLibraryPlaylistBucket",
+            {
+                bucketName: `${props.awsPlaylistBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
+                publicReadAccess: true,
+                blockPublicAccess: new s3.BlockPublicAccess({
+                    blockPublicAcls: false,
+                    blockPublicPolicy: false,
+                    ignorePublicAcls: false,
+                    restrictPublicBuckets: false,
+                }),
+                objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+                removalPolicy: cdk.RemovalPolicy.DESTROY,
+                transferAcceleration: true,
+                versioned: true,
+                lifecycleRules: [
+                    {
+                        // Create strict bucket TTL policy
+                        // Minimum is 3 days
+                        // No need to store cached media for more than 3 days
+                        expiration: cdk.Duration.days(3),
+                        id: "DeleteAfterThreeDays",
+                        // Ensure noncurrent versions are also deleted
+                        noncurrentVersionExpiration: cdk.Duration.days(3),
+                        // Cleanup incomplete multipart uploads
+                        abortIncompleteMultipartUploadAfter:
+                            cdk.Duration.days(3),
+                    },
+                    {
+                        // Separate rule for expired object delete markers
+                        id: "CleanupExpiredDeleteMarkers",
+                        // Enable expiration of delete markers with no noncurrent versions
+                        expiredObjectDeleteMarker: true,
+                    },
+                ],
+            }
+        );
+        // Download restriction - CORS origin
+        playlistBucket.addCorsRule({
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
             allowedOrigins: [allowedOrigin],
             allowedHeaders: ["*"],
             exposedHeaders: ["ETag"],
@@ -128,7 +178,8 @@ export class MediaLibraryStack extends cdk.Stack {
             }
         );
         // Grant upload permissions
-        cacheBucket.grantWrite(sourceWorkerUser);
+        mediaBucket.grantWrite(sourceWorkerUser);
+        playlistBucket.grantWrite(sourceWorkerUser);
 
         /* CLOUDFRONT CDN - ORIGINS */
         // CloudFront distribution origins & access identities
@@ -143,17 +194,29 @@ export class MediaLibraryStack extends cdk.Stack {
         const websiteOrigin = new origins.S3Origin(websiteBucket, {
             originAccessIdentity: websiteOAI,
         });
-        const cacheOAI = new cloudfront.OriginAccessIdentity(
+        const mediaOAI = new cloudfront.OriginAccessIdentity(
             this,
-            `CacheBucketOAI`,
+            `MediaBucketOAI`,
             {
-                comment: `OAI for CloudFront -> S3 Bucket ${cacheBucket.bucketName}`,
+                comment: `OAI for CloudFront -> S3 Bucket ${mediaBucket.bucketName}`,
             }
         );
-        cacheBucket.grantRead(cacheOAI);
-        const cacheOrigin = new origins.S3Origin(cacheBucket, {
-            // originPath: "",
-            originAccessIdentity: cacheOAI,
+        mediaBucket.grantRead(mediaOAI);
+        const mediaOrigin = new origins.S3Origin(mediaBucket, {
+            originPath: "",
+            originAccessIdentity: mediaOAI,
+        });
+        const playlistOAI = new cloudfront.OriginAccessIdentity(
+            this,
+            `PlaylistBucketOAI`,
+            {
+                comment: `OAI for CloudFront -> S3 Bucket ${playlistBucket.bucketName}`,
+            }
+        );
+        playlistBucket.grantRead(playlistOAI);
+        const playlistOrigin = new origins.S3Origin(playlistBucket, {
+            originPath: "",
+            originAccessIdentity: playlistOAI,
         });
 
         /* CLOUDFRONT CDN - URL REWRITES & DEV ENV ACCESS */
@@ -291,8 +354,30 @@ export class MediaLibraryStack extends cdk.Stack {
                     ],
                 },
                 additionalBehaviors: {
-                    "/cache/*": {
-                        origin: cacheOrigin,
+                    "/media/*": {
+                        origin: mediaOrigin,
+                        viewerProtocolPolicy:
+                            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                        allowedMethods:
+                            cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+                        compress: true,
+                        cachePolicy: cdnCachePolicy,
+                        originRequestPolicy:
+                            cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
+                        responseHeadersPolicy:
+                            cloudfront.ResponseHeadersPolicy
+                                .CORS_ALLOW_ALL_ORIGINS,
+                        functionAssociations: [
+                            {
+                                function: viewerRequestFunction,
+                                eventType:
+                                    cloudfront.FunctionEventType.VIEWER_REQUEST,
+                            },
+                        ],
+                    },
+                    "/playlist/*": {
+                        origin: playlistOrigin,
                         viewerProtocolPolicy:
                             cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                         allowedMethods:
@@ -867,9 +952,13 @@ export class MediaLibraryStack extends cdk.Stack {
         //             : "N/A (Firewall not enabled)",
         //     description: "ARN of the WAF Web ACL for IP-based rate limiting",
         // });
-        new cdk.CfnOutput(this, "CacheBucketName", {
-            value: cacheBucket.bucketName,
+        new cdk.CfnOutput(this, "MediaBucketName", {
+            value: mediaBucket.bucketName,
             description: "Bucket name for storing cached media",
+        });
+        new cdk.CfnOutput(this, "PlaylistBucketName", {
+            value: playlistBucket.bucketName,
+            description: "Bucket name for storing media playlists",
         });
         new cdk.CfnOutput(this, "WebsiteBucketName", {
             value: websiteBucket.bucketName,
