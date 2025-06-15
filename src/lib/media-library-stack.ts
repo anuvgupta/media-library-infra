@@ -61,7 +61,6 @@ export class MediaLibraryStack extends cdk.Stack {
         // Input bucket for media cache
         const cacheBucket = new s3.Bucket(this, "MediaLibraryCacheBucket", {
             bucketName: `${props.awsCacheBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
-            publicReadAccess: false,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -133,24 +132,28 @@ export class MediaLibraryStack extends cdk.Stack {
 
         /* CLOUDFRONT CDN - ORIGINS */
         // CloudFront distribution origins & access identities
+        const websiteOAI = new cloudfront.OriginAccessIdentity(
+            this,
+            `WebsiteBucketOAI`,
+            {
+                comment: `OAI for CloudFront -> S3 Bucket ${websiteBucket.bucketName}`,
+            }
+        );
+        websiteBucket.grantRead(websiteOAI);
         const websiteOrigin = new origins.S3Origin(websiteBucket, {
-            originAccessIdentity: new cloudfront.OriginAccessIdentity(
-                this,
-                `WebsiteBucketOAI`,
-                {
-                    comment: `OAI for CloudFront -> S3 Bucket ${websiteBucket.bucketName}`,
-                }
-            ),
+            originAccessIdentity: websiteOAI,
         });
+        const cacheOAI = new cloudfront.OriginAccessIdentity(
+            this,
+            `CacheBucketOAI`,
+            {
+                comment: `OAI for CloudFront -> S3 Bucket ${cacheBucket.bucketName}`,
+            }
+        );
+        cacheBucket.grantRead(cacheOAI);
         const cacheOrigin = new origins.S3Origin(cacheBucket, {
-            originPath: "",
-            originAccessIdentity: new cloudfront.OriginAccessIdentity(
-                this,
-                `CacheBucketOAI`,
-                {
-                    comment: `OAI for CloudFront -> S3 Bucket ${cacheBucket.bucketName}`,
-                }
-            ),
+            // originPath: "",
+            originAccessIdentity: cacheOAI,
         });
 
         /* CLOUDFRONT CDN - URL REWRITES & DEV ENV ACCESS */
