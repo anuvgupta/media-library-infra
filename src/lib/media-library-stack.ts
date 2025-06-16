@@ -181,19 +181,6 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             ],
         });
-        // // Upload restriction - CORS origin
-        // mediaBucket.addCorsRule({
-        //     allowedMethods: [
-        //         s3.HttpMethods.PUT,
-        //         s3.HttpMethods.POST,
-        //         // s3.HttpMethods.GET,
-        //         // s3.HttpMethods.HEAD,
-        //     ],
-        //     allowedOrigins: [allowedOrigin],
-        //     allowedHeaders: ["*"],
-        //     exposedHeaders: ["ETag"],
-        //     maxAge: 3000,
-        // });
 
         /* S3 BUCKETS - PLAYLIST BUCKET */
         const playlistBucket = new s3.Bucket(
@@ -414,69 +401,6 @@ export class MediaLibraryStack extends cdk.Stack {
             }
         );
 
-        /* LAMBDA FUNCTIONS - LIBRARY API */
-        // Lambda function for library management API
-        const libraryApiLambda = new nodejs.NodejsFunction(
-            this,
-            "LibraryApiLambda",
-            {
-                runtime: lambda.Runtime.NODEJS_18_X,
-                handler: "main.handler",
-                code: lambda.Code.fromAsset(
-                    path.join(__dirname, "../lambdas/library-api")
-                ),
-                environment: {
-                    LIBRARY_ACCESS_TABLE_NAME: libraryAccessTable.tableName,
-                    LIBRARY_SHARED_TABLE_NAME: librarySharedTable.tableName,
-                    LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
-                    PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
-                    ALLOWED_ORIGIN: allowedOrigin,
-                },
-                timeout: cdk.Duration.seconds(30),
-            }
-        );
-        // Grant permissions to the Lambda function
-        libraryAccessTable.grantReadData(libraryApiLambda);
-        librarySharedTable.grantReadData(libraryApiLambda);
-        libraryBucket.grantRead(libraryApiLambda);
-        playlistBucket.grantRead(libraryApiLambda);
-
-        /* LAMBDA - APIS */
-        // // Create Lambda function for generating pre-signed URLs
-        // const uploadUrlLambda = new nodejs.NodejsFunction(
-        //     this,
-        //     "UploadUrlLambda",
-        //     {
-        //         runtime: lambda.Runtime.NODEJS_18_X,
-        //         code: lambda.Code.fromAsset(
-        //             path.join(__dirname, "../lambdas/get-upload-url")
-        //         ),
-        //         handler: "main.handler",
-        //         environment: {
-        //             S3_BUCKET_NAME: cacheBucket.bucketName,
-        //             ALLOWED_ORIGIN: allowedOrigin,
-        //         },
-        //         bundling: {
-        //             minify: true,
-        //             sourceMap: true,
-        //             forceDockerBundling: true, // Force Docker bundling
-        //             nodeModules: [
-        //                 "@aws-sdk/client-s3",
-        //                 "@aws-sdk/s3-request-presigner",
-        //             ],
-        //         },
-        //         timeout: cdk.Duration.seconds(10),
-        //     }
-        // );
-        // // Grant the Lambda permissions to generate pre-signed URLs for the input bucket
-        // uploadUrlLambda.addToRolePolicy(
-        //     new iam.PolicyStatement({
-        //         actions: ["s3:PutObject"],
-        //         resources: [`${cacheBucket.bucketArn}/*`],
-        //         effect: iam.Effect.ALLOW,
-        //     })
-        // );
-
         /* COGNITO IDENTITY POOL - USER AUTHENTICATION */
         // Create User Pool for user authentication
         const userPool = new cognito.UserPool(this, "MediaLibraryUserPool", {
@@ -577,6 +501,29 @@ export class MediaLibraryStack extends cdk.Stack {
                         providerName: userPool.userPoolProviderName,
                     },
                 ],
+            }
+        );
+
+        /* LAMBDA FUNCTIONS - LIBRARY API */
+        // Lambda function for library management API
+        const libraryApiLambda = new nodejs.NodejsFunction(
+            this,
+            "LibraryApiLambda",
+            {
+                runtime: lambda.Runtime.NODEJS_18_X,
+                handler: "main.handler",
+                code: lambda.Code.fromAsset(
+                    path.join(__dirname, "../lambdas/library-api")
+                ),
+                environment: {
+                    LIBRARY_ACCESS_TABLE_NAME: libraryAccessTable.tableName,
+                    LIBRARY_SHARED_TABLE_NAME: librarySharedTable.tableName,
+                    LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
+                    PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
+                    ALLOWED_ORIGIN: allowedOrigin,
+                    USER_POOL_ID: userPool.userPoolId,
+                },
+                timeout: cdk.Duration.seconds(30),
             }
         );
 
@@ -695,6 +642,20 @@ export class MediaLibraryStack extends cdk.Stack {
         // Grant S3 upload permissions
         mediaBucket.grantWrite(sourceWorkerUser);
         playlistBucket.grantWrite(sourceWorkerUser);
+
+        /* IAM - LIBRARY API */
+        // Grant permissions to the Lambda function
+        libraryAccessTable.grantReadData(libraryApiLambda);
+        librarySharedTable.grantReadWriteData(libraryApiLambda);
+        libraryBucket.grantRead(libraryApiLambda);
+        playlistBucket.grantRead(libraryApiLambda);
+        libraryApiLambda.addToRolePolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["cognito-idp:ListUsers", "cognito-idp:AdminGetUser"],
+                resources: [userPool.userPoolArn],
+            })
+        );
 
         /* API GATEWAY - CORS CONFIG */
         const apiCorsConfig = {
@@ -883,6 +844,15 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.movieId": true,
             },
         });
+        // POST /libraries/{ownerId}/share - Share library with another user
+        const shareResource = ownerLibraryResource.addResource("share");
+        shareResource.addMethod("POST", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerId": true,
+            },
+        });
         // // POST /run endpoint
         // const runResource = api.root.addResource("run");
         // // Request model for validation
@@ -982,6 +952,10 @@ export class MediaLibraryStack extends cdk.Stack {
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/movies/*/playlist`,
                     // OPTIONS preflight for /libraries/{ownerId}/movies/{movieId}/playlist
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/movies/*/playlist`,
+                    // POST /libraries/{ownerId}/share
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/libraries/*/share`,
+                    // OPTIONS preflight for /libraries/{ownerId}/share
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
                 ],
             })
         );

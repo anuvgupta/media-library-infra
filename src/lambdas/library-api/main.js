@@ -2,19 +2,31 @@ const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
     DynamoDBDocumentClient,
     GetCommand,
+    PutCommand,
     QueryCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const {
+    CognitoIdentityProviderClient,
+    ListUsersCommand,
+    AdminGetUserCommand,
+} = require("@aws-sdk/client-cognito-identity-provider");
+
+// Env vars
+const AWS_REGION = process.env.AWS_REGION;
+const USER_POOL_ID = process.env.USER_POOL_ID;
+const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
+const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
+const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
+const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 
 // Initialize clients
 const dynamodbClient = new DynamoDBClient({});
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 const s3 = new S3Client({});
-
-const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
-const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
-const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
-const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
+const cognitoClient = new CognitoIdentityProviderClient({
+    region: AWS_REGION,
+});
 
 exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
@@ -47,6 +59,8 @@ exports.handler = async (event) => {
                     pathParameters.movieId,
                     userId
                 );
+            case "/libraries/{ownerId}/share":
+                return await shareLibrary(event);
             default:
                 return createResponse(404, { error: "Endpoint not found" });
         }
@@ -185,6 +199,99 @@ async function getMoviePlaylist(ownerId, movieId, userId) {
         }
         console.error("Error getting playlist:", error);
         throw error;
+    }
+}
+
+// Share library with user
+async function shareLibrary(event) {
+    const { ownerId } = event.pathParameters;
+    let { shareWithIdentifier, permissions = "read" } = JSON.parse(event.body);
+    const requestingUserId = event.requestContext.authorizer.claims.sub;
+
+    // Validate requesting user owns the library
+    if (ownerId !== requestingUserId) {
+        return createResponse(403, {
+            error: "You can only share your own library",
+        });
+    }
+
+    // Validate permissions
+    // if (!["read", "write"].includes(permissions)) {
+    //     return createResponse(400, {
+    //         error: "Permissions must be 'read' or 'write'",
+    //     });
+    // }
+    permissions = "read";
+
+    try {
+        // Find user by username or email
+        let targetUserId;
+
+        // Try to find by username first
+        try {
+            const getUserCommand = new AdminGetUserCommand({
+                UserPoolId: USER_POOL_ID,
+                Username: shareWithIdentifier,
+            });
+            const userResult = await cognitoClient.send(getUserCommand);
+            targetUserId = userResult.UserAttributes.find(
+                (attr) => attr.Name === "sub"
+            )?.Value;
+        } catch (error) {
+            // If not found by username, try by email
+            const listUsersCommand = new ListUsersCommand({
+                UserPoolId: USER_POOL_ID,
+                Filter: `email = "${shareWithIdentifier}"`,
+            });
+            const usersResult = await cognitoClient.send(listUsersCommand);
+
+            if (usersResult.Users.length === 0) {
+                return createResponse(404, { error: "User not found" });
+            }
+
+            targetUserId = usersResult.Users[0].Attributes.find(
+                (attr) => attr.Name === "sub"
+            )?.Value;
+        }
+
+        if (!targetUserId) {
+            return createResponse(404, { error: "User not found" });
+        }
+
+        // Check if library exists and is owned by the requesting user
+        const libraryParams = {
+            TableName: LIBRARY_ACCESS_TABLE,
+            Key: { ownerId },
+        };
+
+        const libraryResult = await dynamodb.send(
+            new GetCommand(libraryParams)
+        );
+        if (!libraryResult.Item) {
+            return createResponse(404, { error: "Library not found" });
+        }
+
+        // Add or update sharing record
+        const shareParams = {
+            TableName: LIBRARY_SHARED_TABLE,
+            Item: {
+                ownerId,
+                sharedWithUserId: targetUserId,
+                sharedAt: new Date().toISOString(),
+                permissions,
+            },
+        };
+
+        await dynamodb.send(new PutCommand(shareParams));
+
+        return createResponse(200, {
+            message: "Library shared successfully",
+            sharedWith: targetUserId,
+            permissions,
+        });
+    } catch (error) {
+        console.error("Error sharing library:", error);
+        return createResponse(500, { error: "Internal server error" });
     }
 }
 
