@@ -39,9 +39,9 @@ exports.handler = async (event) => {
         switch (event.resource) {
             case "/libraries":
                 return await getUserLibraries(userId);
-            case "/libraries/{ownerId}/library.json":
+            case "/libraries/{ownerId}/library":
                 return await getLibraryJson(pathParameters.ownerId, userId);
-            case "/libraries/{ownerId}/movies/{movieId}/playlist.m3u8":
+            case "/libraries/{ownerId}/movies/{movieId}/playlist":
                 return await getMoviePlaylist(
                     pathParameters.ownerId,
                     pathParameters.movieId,
