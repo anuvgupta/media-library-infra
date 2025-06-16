@@ -20,7 +20,13 @@ exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
 
     // Extract user ID from Cognito JWT token
-    const userId = requestContext.authorizer.claims.sub;
+    const authorizer = requestContext.authorizer;
+    if (!authorizer) {
+        return createResponse(401, {
+            error: "Cognito authorizer not provided",
+        });
+    }
+    const userId = authorizer.claims.sub;
 
     console.log("Request:", {
         httpMethod,
