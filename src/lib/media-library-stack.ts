@@ -7,6 +7,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
@@ -18,10 +19,25 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 
 import { Construct } from "constructs";
 
+interface LibraryAccessRecord {
+    ownerId: string;
+    accessType: "private" | "shared" | "public";
+    createdAt: string;
+    updatedAt: string;
+}
+
+interface LibrarySharedRecord {
+    ownerId: string;
+    sharedWithUserId: string;
+    sharedAt: string;
+    permissions: "read" | "write";
+}
+
 interface MediaLibraryStackProps extends cdk.StackProps {
     stageName: string;
     domainName: string;
     apiDomainName: string;
+    awsLibraryBucketPrefix: string;
     awsMediaBucketPrefix: string;
     awsPlaylistBucketPrefix: string;
     awsWebsiteBucketPrefix: string;
@@ -49,13 +65,90 @@ export class MediaLibraryStack extends cdk.Stack {
             validation: acm.CertificateValidation.fromDns(),
         });
 
+        /* DYNAMODB TABLES - LIBRARY ACCESS CONTROL */
+        // Main table for library ownership and access type
+        const libraryAccessTable = new dynamodb.Table(
+            this,
+            "LibraryAccessTable",
+            {
+                tableName: `media-library-access-${props.stageName}`,
+                partitionKey: {
+                    name: "ownerId",
+                    type: dynamodb.AttributeType.STRING,
+                },
+                billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+                removalPolicy:
+                    props.stageName === "dev"
+                        ? cdk.RemovalPolicy.DESTROY
+                        : cdk.RemovalPolicy.RETAIN,
+            }
+        );
+        // Table for library sharing relationships - cleaner structure
+        const librarySharedTable = new dynamodb.Table(
+            this,
+            "LibrarySharedTable",
+            {
+                tableName: `media-library-shared-${props.stageName}`,
+                partitionKey: {
+                    name: "ownerId",
+                    type: dynamodb.AttributeType.STRING,
+                }, // Owner of the library
+                sortKey: {
+                    name: "sharedWithUserId",
+                    type: dynamodb.AttributeType.STRING,
+                }, // User who has access
+                billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+                removalPolicy:
+                    props.stageName === "dev"
+                        ? cdk.RemovalPolicy.DESTROY
+                        : cdk.RemovalPolicy.RETAIN,
+            }
+        );
+        librarySharedTable.addGlobalSecondaryIndex({
+            indexName: "SharedWithUserIndex",
+            partitionKey: {
+                name: "sharedWithUserId",
+                type: dynamodb.AttributeType.STRING,
+            },
+            sortKey: {
+                name: "ownerId",
+                type: dynamodb.AttributeType.STRING,
+            },
+            projectionType: dynamodb.ProjectionType.ALL,
+        });
+
         /* S3 BUCKETS - WEBSITE BUCKET */
         // Website bucket for static files
         const websiteBucket = new s3.Bucket(this, "MediaLibraryWebsiteBucket", {
-            bucketName: `${props.awsWebsiteBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
+            bucketName: `${props.awsWebsiteBucketPrefix}-${this.account}-${props.stageName}`,
             publicReadAccess: false,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            versioned: true,
+            lifecycleRules: [
+                {
+                    id: "CleanupNoncurrentVersions",
+                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                },
+            ],
+        });
+
+        /* S3 BUCKET - LIBRARY BUCKET */
+        // Bucket for library metadata
+        const libraryBucket = new s3.Bucket(this, "MediaLibraryLibraryBucket", {
+            bucketName: `${props.awsLibraryBucketPrefix}-${this.account}-${props.stageName}`,
+            publicReadAccess: false,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            versioned: true,
+            lifecycleRules: [
+                {
+                    id: "CleanupNoncurrentVersions",
+                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                },
+            ],
         });
 
         /* S3 BUCKETS - MEDIA BUCKET */
@@ -150,37 +243,6 @@ export class MediaLibraryStack extends cdk.Stack {
             maxAge: 3000,
         });
 
-        /* S3 BUCKETS - PERMISSIONS */
-        // IAM user for source worker to upload to cache bucket
-        const sourceWorkerUser = new iam.User(
-            this,
-            "MediaLibrarySourceWorkerUser"
-        );
-        // Create access key and store in Secrets Manager
-        const sourceWorkerUserAccessKey = new iam.AccessKey(
-            this,
-            "MediaLibrarySourceWorkerUserAccessKey",
-            {
-                user: sourceWorkerUser,
-            }
-        );
-        const sourceWorkerUserCredentialsSecret = new secretsmanager.Secret(
-            this,
-            "MediaLibrarySourceWorkerUserUploadCredentials",
-            {
-                description: `AWS credentials for media library source worker's S3 upload access in ${props.stageName}`,
-                secretObjectValue: {
-                    accessKeyId: cdk.SecretValue.unsafePlainText(
-                        sourceWorkerUserAccessKey.accessKeyId
-                    ),
-                    secretAccessKey: sourceWorkerUserAccessKey.secretAccessKey,
-                },
-            }
-        );
-        // Grant upload permissions
-        mediaBucket.grantWrite(sourceWorkerUser);
-        playlistBucket.grantWrite(sourceWorkerUser);
-
         /* CLOUDFRONT CDN - ORIGINS */
         // CloudFront distribution origins & access identities
         const websiteOAI = new cloudfront.OriginAccessIdentity(
@@ -193,30 +255,6 @@ export class MediaLibraryStack extends cdk.Stack {
         websiteBucket.grantRead(websiteOAI);
         const websiteOrigin = new origins.S3Origin(websiteBucket, {
             originAccessIdentity: websiteOAI,
-        });
-        const mediaOAI = new cloudfront.OriginAccessIdentity(
-            this,
-            `MediaBucketOAI`,
-            {
-                comment: `OAI for CloudFront -> S3 Bucket ${mediaBucket.bucketName}`,
-            }
-        );
-        mediaBucket.grantRead(mediaOAI);
-        const mediaOrigin = new origins.S3Origin(mediaBucket, {
-            originPath: "",
-            originAccessIdentity: mediaOAI,
-        });
-        const playlistOAI = new cloudfront.OriginAccessIdentity(
-            this,
-            `PlaylistBucketOAI`,
-            {
-                comment: `OAI for CloudFront -> S3 Bucket ${playlistBucket.bucketName}`,
-            }
-        );
-        playlistBucket.grantRead(playlistOAI);
-        const playlistOrigin = new origins.S3Origin(playlistBucket, {
-            originPath: "",
-            originAccessIdentity: playlistOAI,
         });
 
         /* CLOUDFRONT CDN - URL REWRITES & DEV ENV ACCESS */
@@ -353,52 +391,7 @@ export class MediaLibraryStack extends cdk.Stack {
                         },
                     ],
                 },
-                additionalBehaviors: {
-                    "/media/*": {
-                        origin: mediaOrigin,
-                        viewerProtocolPolicy:
-                            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                        allowedMethods:
-                            cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-                        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-                        compress: true,
-                        cachePolicy: cdnCachePolicy,
-                        originRequestPolicy:
-                            cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
-                        responseHeadersPolicy:
-                            cloudfront.ResponseHeadersPolicy
-                                .CORS_ALLOW_ALL_ORIGINS,
-                        functionAssociations: [
-                            {
-                                function: viewerRequestFunction,
-                                eventType:
-                                    cloudfront.FunctionEventType.VIEWER_REQUEST,
-                            },
-                        ],
-                    },
-                    "/playlist/*": {
-                        origin: playlistOrigin,
-                        viewerProtocolPolicy:
-                            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                        allowedMethods:
-                            cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-                        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-                        compress: true,
-                        cachePolicy: cdnCachePolicy,
-                        originRequestPolicy:
-                            cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
-                        responseHeadersPolicy:
-                            cloudfront.ResponseHeadersPolicy
-                                .CORS_ALLOW_ALL_ORIGINS,
-                        functionAssociations: [
-                            {
-                                function: viewerRequestFunction,
-                                eventType:
-                                    cloudfront.FunctionEventType.VIEWER_REQUEST,
-                            },
-                        ],
-                    },
-                },
+                // additionalBehaviors: {},
                 priceClass:
                     props.stageName === "dev"
                         ? cloudfront.PriceClass.PRICE_CLASS_100
@@ -420,6 +413,205 @@ export class MediaLibraryStack extends cdk.Stack {
                 ],
             }
         );
+
+        /* LAMBDA FUNCTIONS - LIBRARY API */
+        // Lambda function for library management API
+        const libraryApiLambda = new nodejs.NodejsFunction(
+            this,
+            "LibraryApiLambda",
+            {
+                runtime: lambda.Runtime.NODEJS_18_X,
+                handler: "handler",
+                code: lambda.Code.fromInline(`
+const AWS = require('aws-sdk');
+const dynamodb = new AWS.DynamoDB.DocumentClient();
+const s3 = new AWS.S3();
+
+const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
+const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
+const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
+const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
+
+exports.handler = async (event) => {
+    const { httpMethod, pathParameters, requestContext } = event;
+    const userId = requestContext.authorizer.claims.sub;
+    
+    console.log('Request:', { httpMethod, pathParameters, userId });
+    
+    try {
+        switch (event.resource) {
+            case '/libraries':
+                return await getUserLibraries(userId);
+            case '/libraries/{ownerId}/library.json':
+                return await getLibraryJson(pathParameters.ownerId, userId);
+            case '/libraries/{ownerId}/movies/{movieId}/playlist.m3u8':
+                return await getMoviePlaylist(pathParameters.ownerId, pathParameters.movieId, userId);
+            default:
+                return createResponse(404, { error: 'Endpoint not found' });
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        return createResponse(500, { error: 'Internal server error' });
+    }
+};
+
+// Get all libraries accessible to the user
+async function getUserLibraries(userId) {
+    try {
+        // Get user's own library
+        const ownedLibrary = await dynamodb.get({
+            TableName: LIBRARY_ACCESS_TABLE,
+            Key: { ownerId: userId }
+        }).promise();
+        
+        // Get libraries shared with user
+        const sharedLibraries = await dynamodb.query({
+            TableName: LIBRARY_SHARED_TABLE,
+            IndexName: 'SharedWithUserIndex',
+            KeyConditionExpression: 'sharedWithUserId = :userId',
+            ExpressionAttributeValues: {
+                ':userId': userId
+            }
+        }).promise();
+        
+        const result = {
+            ownedLibrary: ownedLibrary.Item || null,
+            sharedLibraries: sharedLibraries.Items.map(item => ({
+                ownerId: item.ownerId,
+                sharedAt: item.sharedAt,
+                permissions: item.permissions
+            }))
+        };
+        
+        return createResponse(200, result);
+    } catch (error) {
+        console.error('Error getting user libraries:', error);
+        throw error;
+    }
+}
+
+// Get library.json for a specific user's library
+async function getLibraryJson(ownerId, userId) {
+    try {
+        // Check if user has access to this library
+        const hasAccess = await checkLibraryAccess(ownerId, userId);
+        if (!hasAccess) {
+            return createResponse(403, { error: 'Access denied to this library' });
+        }
+        
+        // Get the library.json file from S3
+        const s3Params = {
+            Bucket: LIBRARY_BUCKET,
+            Key: \`library/\${ownerId}/library.json\`
+        };
+        
+        const s3Result = await s3.getObject(s3Params).promise();
+        const libraryData = JSON.parse(s3Result.Body.toString());
+        
+        return createResponse(200, libraryData, 'application/json');
+        
+    } catch (error) {
+        if (error.code === 'NoSuchKey') {
+            return createResponse(404, { error: 'Library not found' });
+        }
+        console.error('Error getting library.json:', error);
+        throw error;
+    }
+}
+
+// Get playlist for a specific movie
+async function getMoviePlaylist(ownerId, movieId, userId) {
+    try {
+        // Check if user has access to this library
+        const hasAccess = await checkLibraryAccess(ownerId, userId);
+        if (!hasAccess) {
+            return createResponse(403, { error: 'Access denied to this library' });
+        }
+        
+        // Get the playlist file from S3
+        const s3Params = {
+            Bucket: PLAYLIST_BUCKET,
+            Key: \`media/\${ownerId}/movies/\${movieId}/playlist.m3u8\`
+        };
+        
+        const s3Result = await s3.getObject(s3Params).promise();
+        const playlistContent = s3Result.Body.toString();
+        
+        return createResponse(200, playlistContent, 'application/vnd.apple.mpegurl');
+        
+    } catch (error) {
+        if (error.code === 'NoSuchKey') {
+            return createResponse(404, { error: 'Playlist not found' });
+        }
+        console.error('Error getting playlist:', error);
+        throw error;
+    }
+}
+
+// Check if user has access to a library
+async function checkLibraryAccess(ownerId, userId) {
+    // Owner always has access
+    if (ownerId === userId) {
+        return true;
+    }
+    
+    // Check if library exists and get its access type
+    const library = await dynamodb.get({
+        TableName: LIBRARY_ACCESS_TABLE,
+        Key: { ownerId }
+    }).promise();
+    
+    if (!library.Item) {
+        return false;
+    }
+    
+    if (library.Item.accessType === 'public') {
+        return true;
+    }
+    
+    if (library.Item.accessType === 'shared') {
+        // Check if user has shared access
+        const sharedAccess = await dynamodb.get({
+            TableName: LIBRARY_SHARED_TABLE,
+            Key: {
+                ownerId: ownerId,
+                sharedWithUserId: userId
+            }
+        }).promise();
+        
+        return !!sharedAccess.Item;
+    }
+    
+    return false; // Private library, no access
+}
+
+function createResponse(statusCode, body, contentType = 'application/json') {
+    return {
+        statusCode,
+        headers: {
+            'Content-Type': contentType,
+            'Access-Control-Allow-Origin': process.env.ALLOWED_ORIGIN,
+            'Access-Control-Allow-Credentials': 'true',
+        },
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+    };
+}
+        `),
+                environment: {
+                    LIBRARY_ACCESS_TABLE_NAME: libraryAccessTable.tableName,
+                    LIBRARY_SHARED_TABLE_NAME: librarySharedTable.tableName,
+                    LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
+                    PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
+                    ALLOWED_ORIGIN: allowedOrigin,
+                },
+                timeout: cdk.Duration.seconds(30),
+            }
+        );
+        // Grant permissions to the Lambda function
+        libraryAccessTable.grantReadData(libraryApiLambda);
+        librarySharedTable.grantReadData(libraryApiLambda);
+        libraryBucket.grantRead(libraryApiLambda);
+        playlistBucket.grantRead(libraryApiLambda);
 
         /* LAMBDA - APIS */
         // // Create Lambda function for generating pre-signed URLs
@@ -456,6 +648,245 @@ export class MediaLibraryStack extends cdk.Stack {
         //         effect: iam.Effect.ALLOW,
         //     })
         // );
+
+        /* COGNITO IDENTITY POOL - USER AUTHENTICATION */
+        // Create User Pool for user authentication
+        const userPool = new cognito.UserPool(this, "MediaLibraryUserPool", {
+            userPoolName: `media-library-user-pool-${props.stageName}`,
+            selfSignUpEnabled: true,
+            signInAliases: {
+                email: true,
+                username: true,
+            },
+            autoVerify: {
+                email: true,
+            },
+            passwordPolicy: {
+                minLength: 8,
+                requireLowercase: true,
+                requireUppercase: true,
+                requireDigits: true,
+                requireSymbols: true,
+            },
+            accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+            standardAttributes: {
+                email: {
+                    required: true,
+                    mutable: true,
+                },
+                givenName: {
+                    required: false,
+                    mutable: true,
+                },
+                familyName: {
+                    required: false,
+                    mutable: true,
+                },
+            },
+            userVerification: {
+                emailSubject: "Verify your email for Media Library",
+                emailBody:
+                    "Thanks for signing up! Your verification code is {####}",
+                emailStyle: cognito.VerificationEmailStyle.CODE,
+            },
+            removalPolicy:
+                props.stageName === "dev"
+                    ? cdk.RemovalPolicy.DESTROY
+                    : cdk.RemovalPolicy.RETAIN,
+        });
+        // Create User Pool Client
+        const userPoolClient = new cognito.UserPoolClient(
+            this,
+            "MediaLibraryUserPoolClient",
+            {
+                userPool,
+                userPoolClientName: `media-library-user-pool-client-${props.stageName}`,
+                authFlows: {
+                    userSrp: true,
+                    userPassword: true, // Enable username/password auth
+                    adminUserPassword: true, // Allow admin to set passwords
+                },
+                generateSecret: false, // Important: must be false for frontend apps
+                preventUserExistenceErrors: true,
+                // Configure token validity
+                accessTokenValidity: cdk.Duration.hours(1),
+                idTokenValidity: cdk.Duration.hours(1),
+                refreshTokenValidity: cdk.Duration.days(30),
+                // OAuth settings (optional, for future social login support)
+                oAuth: {
+                    flows: {
+                        authorizationCodeGrant: true,
+                    },
+                    scopes: [
+                        cognito.OAuthScope.OPENID,
+                        cognito.OAuthScope.EMAIL,
+                        cognito.OAuthScope.PROFILE,
+                    ],
+                    callbackUrls: [allowedOrigin],
+                    logoutUrls: [allowedOrigin],
+                },
+            }
+        );
+        // Create Cognito authorizer for authenticated endpoints
+        const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(
+            this,
+            "CognitoAuthorizer",
+            {
+                cognitoUserPools: [userPool],
+                authorizerName: "CognitoAuthorizer",
+                identitySource: "method.request.header.Authorization",
+            }
+        );
+        // Identity pool
+        const identityPool = new cognito.CfnIdentityPool(
+            this,
+            "MediaLibraryIdentityPool",
+            {
+                allowUnauthenticatedIdentities: true,
+                cognitoIdentityProviders: [
+                    {
+                        clientId: userPoolClient.userPoolClientId,
+                        providerName: userPool.userPoolProviderName,
+                    },
+                ],
+            }
+        );
+
+        /* IAM - COGNITO USER ROLES */
+        // Create IAM role for unauthenticated access
+        const unauthRole = new iam.Role(this, "CognitoUnauthRole", {
+            assumedBy: new iam.FederatedPrincipal(
+                "cognito-identity.amazonaws.com",
+                {
+                    StringEquals: {
+                        "cognito-identity.amazonaws.com:aud": identityPool.ref,
+                    },
+                    "ForAnyValue:StringLike": {
+                        "cognito-identity.amazonaws.com:amr": "unauthenticated",
+                    },
+                },
+                "sts:AssumeRoleWithWebIdentity"
+            ),
+        });
+        // Create authenticated role for logged-in users
+        const authRole = new iam.Role(this, "CognitoAuthRole", {
+            assumedBy: new iam.FederatedPrincipal(
+                "cognito-identity.amazonaws.com",
+                {
+                    StringEquals: {
+                        "cognito-identity.amazonaws.com:aud": identityPool.ref,
+                    },
+                    "ForAnyValue:StringLike": {
+                        "cognito-identity.amazonaws.com:amr": "authenticated",
+                    },
+                },
+                "sts:AssumeRoleWithWebIdentity"
+            ),
+        });
+        // Grant authenticated users read access to media/playlist bucket for their own content
+        // Grant authenticated users read access to media bucket for their own content
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:GetObject", "s3:ListBucket"],
+                resources: [
+                    // Allow access to the bucket itself for listing
+                    mediaBucket.bucketArn,
+                    // Users can read their own media files using Cognito identity ID
+                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+                conditions: {
+                    StringLike: {
+                        "s3:prefix": [
+                            "media/${cognito-identity.amazonaws.com:sub}/*",
+                        ],
+                    },
+                },
+            })
+        );
+        // Grant authenticated users read access to playlist bucket for their own content
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:GetObject", "s3:ListBucket"],
+                resources: [
+                    // Allow access to the playlist bucket itself for listing
+                    playlistBucket.bucketArn,
+                    // Users can read their own playlist files using Cognito identity ID
+                    `${playlistBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+                conditions: {
+                    StringLike: {
+                        "s3:prefix": [
+                            "media/${cognito-identity.amazonaws.com:sub}/*",
+                        ],
+                    },
+                },
+            })
+        );
+        // // Add execute-api permission to role
+        // unauthRole.addToPolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["execute-api:Invoke"],
+        //         resources: [
+        //             // POST methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/upload`,
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/run`,
+        //             // OPTIONS preflight for POST methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/upload`,
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/run`,
+        //             // GET methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/status/*`,
+        //             // OPTIONS preflight for GET methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/status/*`,
+        //         ],
+        //     })
+        // );
+        // Set roles on identity pool
+        const identityPoolRoleAttachment =
+            new cognito.CfnIdentityPoolRoleAttachment(
+                this,
+                "IdentityPoolRoleAttachment",
+                {
+                    identityPoolId: identityPool.ref,
+                    roles: {
+                        authenticated: authRole.roleArn,
+                        unauthenticated: unauthRole.roleArn,
+                    },
+                }
+            );
+
+        /* IAM - SOURCE WORKER USER */
+        // IAM user for source worker to upload to cache bucket
+        const sourceWorkerUser = new iam.User(
+            this,
+            "MediaLibrarySourceWorkerUser"
+        );
+        // Create access key and store in Secrets Manager
+        const sourceWorkerUserAccessKey = new iam.AccessKey(
+            this,
+            "MediaLibrarySourceWorkerUserAccessKey",
+            {
+                user: sourceWorkerUser,
+            }
+        );
+        const sourceWorkerUserCredentialsSecret = new secretsmanager.Secret(
+            this,
+            "MediaLibrarySourceWorkerUserUploadCredentials",
+            {
+                description: `AWS credentials for media library source worker's S3 upload access in ${props.stageName}`,
+                secretObjectValue: {
+                    accessKeyId: cdk.SecretValue.unsafePlainText(
+                        sourceWorkerUserAccessKey.accessKeyId
+                    ),
+                    secretAccessKey: sourceWorkerUserAccessKey.secretAccessKey,
+                },
+            }
+        );
+        // Grant S3 upload permissions
+        mediaBucket.grantWrite(sourceWorkerUser);
+        playlistBucket.grantWrite(sourceWorkerUser);
 
         /* API GATEWAY - CORS CONFIG */
         const apiCorsConfig = {
@@ -579,6 +1010,9 @@ export class MediaLibraryStack extends cdk.Stack {
         });
 
         /* API GATEWAY - INTEGRATIONS */
+        const libraryApiIntegration = new apigateway.LambdaIntegration(
+            libraryApiLambda
+        );
         // const runpodsRunIntegration = new apigateway.HttpIntegration(
         //     `${props.runpodsEndpoint}/run`,
         //     {
@@ -613,6 +1047,34 @@ export class MediaLibraryStack extends cdk.Stack {
         // );
 
         /* API GATEWAY - REQUEST HANDLERS */
+        // GET /libraries - Get user's accessible libraries
+        const librariesResource = api.root.addResource("libraries");
+        librariesResource.addMethod("GET", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+        // GET /libraries/{ownerId}/library - Get specific library metadata
+        const ownerLibraryResource = librariesResource.addResource("{ownerId}");
+        const libraryJsonResource = ownerLibraryResource.addResource("library");
+        libraryJsonResource.addMethod("GET", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerId": true,
+            },
+        });
+        // GET /libraries/{ownerId}/movies/{movieId}/playlist - Get movie playlist
+        const moviesResource = ownerLibraryResource.addResource("movies");
+        const movieResource = moviesResource.addResource("{movieId}");
+        const playlistResource = movieResource.addResource("playlist");
+        playlistResource.addMethod("GET", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerId": true,
+                "method.request.path.movieId": true,
+            },
+        });
         // // POST /run endpoint
         // const runResource = api.root.addResource("run");
         // // Request model for validation
@@ -691,61 +1153,6 @@ export class MediaLibraryStack extends cdk.Stack {
             stage: api.deploymentStage,
             domainName: apiCustomDomain,
         });
-
-        /* API GATEWAY - GUEST ACCESS */
-        // Secure the API with Cognito
-        const identityPool = new cognito.CfnIdentityPool(
-            this,
-            "MediaLibraryIdentityPool",
-            {
-                allowUnauthenticatedIdentities: true,
-            }
-        );
-        // Create IAM role for unauthenticated access
-        const unauthRole = new iam.Role(this, "CognitoUnauthRole", {
-            assumedBy: new iam.FederatedPrincipal(
-                "cognito-identity.amazonaws.com",
-                {
-                    StringEquals: {
-                        "cognito-identity.amazonaws.com:aud": identityPool.ref,
-                    },
-                    "ForAnyValue:StringLike": {
-                        "cognito-identity.amazonaws.com:amr": "unauthenticated",
-                    },
-                },
-                "sts:AssumeRoleWithWebIdentity"
-            ),
-        });
-        // // Add execute-api permission to role
-        // unauthRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["execute-api:Invoke"],
-        //         resources: [
-        //             // POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/run`,
-        //             // OPTIONS preflight for POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/run`,
-        //             // GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/status/*`,
-        //             // OPTIONS preflight for GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/status/*`,
-        //         ],
-        //     })
-        // );
-        // Set roles on identity pool
-        new cognito.CfnIdentityPoolRoleAttachment(
-            this,
-            "IdentityPoolRoleAttachment",
-            {
-                identityPoolId: identityPool.ref,
-                roles: {
-                    unauthenticated: unauthRole.roleArn,
-                },
-            }
-        );
 
         /* API GATEWAY - THROTTLING */
         // const apiLimits = calculateTPS(props.throttlingConfig);
@@ -940,10 +1347,31 @@ export class MediaLibraryStack extends cdk.Stack {
             value: api.url,
             description: "URL of the API Gateway endpoint",
         });
+        new cdk.CfnOutput(this, "UserPoolId", {
+            value: userPool.userPoolId,
+            description: "Cognito User Pool ID for user authentication",
+        });
+        new cdk.CfnOutput(this, "UserPoolClientId", {
+            value: userPoolClient.userPoolClientId,
+            description:
+                "Cognito User Pool Client ID for frontend authentication",
+        });
+        new cdk.CfnOutput(this, "UserPoolDomain", {
+            value: userPool.userPoolProviderName,
+            description: "Cognito User Pool domain name",
+        });
         new cdk.CfnOutput(this, "IdentityPoolId", {
             value: identityPool.ref,
             description:
-                "ID of the Cognito Identity Pool for frontend authentication",
+                "ID of the Cognito Identity Pool for frontend authentication (both auth and unauth)",
+        });
+        new cdk.CfnOutput(this, "AuthenticatedRoleArn", {
+            value: authRole.roleArn,
+            description: "ARN of the authenticated user role",
+        });
+        new cdk.CfnOutput(this, "UnauthenticatedRoleArn", {
+            value: unauthRole.roleArn,
+            description: "ARN of the unauthenticated user role",
         });
         // new cdk.CfnOutput(this, "WafWebACLArn", {
         //     value:
@@ -952,6 +1380,10 @@ export class MediaLibraryStack extends cdk.Stack {
         //             : "N/A (Firewall not enabled)",
         //     description: "ARN of the WAF Web ACL for IP-based rate limiting",
         // });
+        new cdk.CfnOutput(this, "LibraryBucketName", {
+            value: libraryBucket.bucketName,
+            description: "S3 bucket for storing user library metadata",
+        });
         new cdk.CfnOutput(this, "MediaBucketName", {
             value: mediaBucket.bucketName,
             description: "Bucket name for storing cached media",

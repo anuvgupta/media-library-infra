@@ -3,6 +3,7 @@
     "apiDomainName": "media-api.anuv.me",
     "stackNamePrefix": "media-library",
     "awsAccountId": "738123590383",
+    "awsLibraryBucketPrefix": "media-library-library",
     "awsWebsiteBucketPrefix": "media-library-website",
     "awsMediaBucketPrefix": "media-library-media",
     "awsPlaylistBucketPrefix": "media-library-playlist",
