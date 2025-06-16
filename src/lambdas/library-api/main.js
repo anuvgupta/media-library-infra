@@ -36,6 +36,7 @@ exports.handler = async (event) => {
     });
 
     try {
+        console.log(`event.resource is ${event.resource}`);
         switch (event.resource) {
             case "/libraries":
                 return await getUserLibraries(userId);
