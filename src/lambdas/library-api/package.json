@@ -1,0 +1,11 @@
+{
+    "name": "library-api-lambda",
+    "version": "1.0.0",
+    "description": "Lambda function for library API",
+    "main": "main.js",
+    "dependencies": {
+        "@aws-sdk/client-dynamodb": "^3.0.0",
+        "@aws-sdk/lib-dynamodb": "^3.0.0",
+        "@aws-sdk/client-s3": "^3.0.0"
+    }
+}

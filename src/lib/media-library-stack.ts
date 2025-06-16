@@ -421,182 +421,10 @@ export class MediaLibraryStack extends cdk.Stack {
             "LibraryApiLambda",
             {
                 runtime: lambda.Runtime.NODEJS_18_X,
-                handler: "handler",
-                code: lambda.Code.fromInline(`
-const AWS = require('aws-sdk');
-const dynamodb = new AWS.DynamoDB.DocumentClient();
-const s3 = new AWS.S3();
-
-const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
-const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
-const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
-const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
-
-exports.handler = async (event) => {
-    const { httpMethod, pathParameters, requestContext } = event;
-    const userId = requestContext.authorizer.claims.sub;
-    
-    console.log('Request:', { httpMethod, pathParameters, userId });
-    
-    try {
-        switch (event.resource) {
-            case '/libraries':
-                return await getUserLibraries(userId);
-            case '/libraries/{ownerId}/library.json':
-                return await getLibraryJson(pathParameters.ownerId, userId);
-            case '/libraries/{ownerId}/movies/{movieId}/playlist.m3u8':
-                return await getMoviePlaylist(pathParameters.ownerId, pathParameters.movieId, userId);
-            default:
-                return createResponse(404, { error: 'Endpoint not found' });
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        return createResponse(500, { error: 'Internal server error' });
-    }
-};
-
-// Get all libraries accessible to the user
-async function getUserLibraries(userId) {
-    try {
-        // Get user's own library
-        const ownedLibrary = await dynamodb.get({
-            TableName: LIBRARY_ACCESS_TABLE,
-            Key: { ownerId: userId }
-        }).promise();
-        
-        // Get libraries shared with user
-        const sharedLibraries = await dynamodb.query({
-            TableName: LIBRARY_SHARED_TABLE,
-            IndexName: 'SharedWithUserIndex',
-            KeyConditionExpression: 'sharedWithUserId = :userId',
-            ExpressionAttributeValues: {
-                ':userId': userId
-            }
-        }).promise();
-        
-        const result = {
-            ownedLibrary: ownedLibrary.Item || null,
-            sharedLibraries: sharedLibraries.Items.map(item => ({
-                ownerId: item.ownerId,
-                sharedAt: item.sharedAt,
-                permissions: item.permissions
-            }))
-        };
-        
-        return createResponse(200, result);
-    } catch (error) {
-        console.error('Error getting user libraries:', error);
-        throw error;
-    }
-}
-
-// Get library.json for a specific user's library
-async function getLibraryJson(ownerId, userId) {
-    try {
-        // Check if user has access to this library
-        const hasAccess = await checkLibraryAccess(ownerId, userId);
-        if (!hasAccess) {
-            return createResponse(403, { error: 'Access denied to this library' });
-        }
-        
-        // Get the library.json file from S3
-        const s3Params = {
-            Bucket: LIBRARY_BUCKET,
-            Key: \`library/\${ownerId}/library.json\`
-        };
-        
-        const s3Result = await s3.getObject(s3Params).promise();
-        const libraryData = JSON.parse(s3Result.Body.toString());
-        
-        return createResponse(200, libraryData, 'application/json');
-        
-    } catch (error) {
-        if (error.code === 'NoSuchKey') {
-            return createResponse(404, { error: 'Library not found' });
-        }
-        console.error('Error getting library.json:', error);
-        throw error;
-    }
-}
-
-// Get playlist for a specific movie
-async function getMoviePlaylist(ownerId, movieId, userId) {
-    try {
-        // Check if user has access to this library
-        const hasAccess = await checkLibraryAccess(ownerId, userId);
-        if (!hasAccess) {
-            return createResponse(403, { error: 'Access denied to this library' });
-        }
-        
-        // Get the playlist file from S3
-        const s3Params = {
-            Bucket: PLAYLIST_BUCKET,
-            Key: \`media/\${ownerId}/movies/\${movieId}/playlist.m3u8\`
-        };
-        
-        const s3Result = await s3.getObject(s3Params).promise();
-        const playlistContent = s3Result.Body.toString();
-        
-        return createResponse(200, playlistContent, 'application/vnd.apple.mpegurl');
-        
-    } catch (error) {
-        if (error.code === 'NoSuchKey') {
-            return createResponse(404, { error: 'Playlist not found' });
-        }
-        console.error('Error getting playlist:', error);
-        throw error;
-    }
-}
-
-// Check if user has access to a library
-async function checkLibraryAccess(ownerId, userId) {
-    // Owner always has access
-    if (ownerId === userId) {
-        return true;
-    }
-    
-    // Check if library exists and get its access type
-    const library = await dynamodb.get({
-        TableName: LIBRARY_ACCESS_TABLE,
-        Key: { ownerId }
-    }).promise();
-    
-    if (!library.Item) {
-        return false;
-    }
-    
-    if (library.Item.accessType === 'public') {
-        return true;
-    }
-    
-    if (library.Item.accessType === 'shared') {
-        // Check if user has shared access
-        const sharedAccess = await dynamodb.get({
-            TableName: LIBRARY_SHARED_TABLE,
-            Key: {
-                ownerId: ownerId,
-                sharedWithUserId: userId
-            }
-        }).promise();
-        
-        return !!sharedAccess.Item;
-    }
-    
-    return false; // Private library, no access
-}
-
-function createResponse(statusCode, body, contentType = 'application/json') {
-    return {
-        statusCode,
-        headers: {
-            'Content-Type': contentType,
-            'Access-Control-Allow-Origin': process.env.ALLOWED_ORIGIN,
-            'Access-Control-Allow-Credentials': 'true',
-        },
-        body: typeof body === 'string' ? body : JSON.stringify(body),
-    };
-}
-        `),
+                handler: "main.handler",
+                code: lambda.Code.fromAsset(
+                    path.join(__dirname, "../lambdas/library-api")
+                ),
                 environment: {
                     LIBRARY_ACCESS_TABLE_NAME: libraryAccessTable.tableName,
                     LIBRARY_SHARED_TABLE_NAME: librarySharedTable.tableName,
@@ -784,7 +612,6 @@ function createResponse(statusCode, body, contentType = 'application/json') {
             ),
         });
         // Grant authenticated users read access to media/playlist bucket for their own content
-        // Grant authenticated users read access to media bucket for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
@@ -824,25 +651,6 @@ function createResponse(statusCode, body, contentType = 'application/json') {
                 },
             })
         );
-        // // Add execute-api permission to role
-        // unauthRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["execute-api:Invoke"],
-        //         resources: [
-        //             // POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/run`,
-        //             // OPTIONS preflight for POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/run`,
-        //             // GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/status/*`,
-        //             // OPTIONS preflight for GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/status/*`,
-        //         ],
-        //     })
-        // );
         // Set roles on identity pool
         const identityPoolRoleAttachment =
             new cognito.CfnIdentityPoolRoleAttachment(
@@ -952,9 +760,9 @@ function createResponse(statusCode, body, contentType = 'application/json') {
         const api = new apigateway.RestApi(this, "MediaLibraryApi", {
             restApiName: `MediaLibraryAPI-${this.account}-${props.stageName}`,
             defaultCorsPreflightOptions: apiCorsConfig,
-            defaultMethodOptions: {
-                authorizationType: apigateway.AuthorizationType.IAM,
-            },
+            // defaultMethodOptions: {
+            //     authorizationType: apigateway.AuthorizationType.IAM,
+            // },
             endpointConfiguration: {
                 types: [apigateway.EndpointType.REGIONAL],
             },
@@ -1153,6 +961,48 @@ function createResponse(statusCode, body, contentType = 'application/json') {
             stage: api.deploymentStage,
             domainName: apiCustomDomain,
         });
+
+        /* API GATEWAY - ACCESS */
+        // Add execute-api permission to roles
+        // Grant authenticated users permission to call the API Gateway endpoints
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["execute-api:Invoke"],
+                resources: [
+                    // GET /libraries
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries`,
+                    // OPTIONS preflight for /libraries
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries`,
+                    // GET /libraries/{ownerId}/library
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/library`,
+                    // OPTIONS preflight for /libraries/{ownerId}/library
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/library`,
+                    // GET /libraries/{ownerId}/movies/{movieId}/playlist
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/movies/*/playlist`,
+                    // OPTIONS preflight for /libraries/{ownerId}/movies/{movieId}/playlist
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/movies/*/playlist`,
+                ],
+            })
+        );
+        // unauthRole.addToPolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["execute-api:Invoke"],
+        //         resources: [
+        //             // POST methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/upload`,
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/run`,
+        //             // OPTIONS preflight for POST methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/upload`,
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/run`,
+        //             // GET methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/status/*`,
+        //             // OPTIONS preflight for GET methods
+        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/status/*`,
+        //         ],
+        //     })
+        // );
 
         /* API GATEWAY - THROTTLING */
         // const apiLimits = calculateTPS(props.throttlingConfig);
