@@ -660,7 +660,7 @@ export class MediaLibraryStack extends cdk.Stack {
         /* API GATEWAY - CORS CONFIG */
         const apiCorsConfig = {
             allowOrigins: [allowedOrigin],
-            allowMethods: ["GET", "POST"],
+            allowMethods: ["GET", "POST", "DELETE"],
             allowHeaders: [
                 "Content-Type",
                 "Authorization",
@@ -677,7 +677,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 "Access-Control-Allow-Origin": `'${allowedOrigin}'`,
                 "Access-Control-Allow-Headers":
                     "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,x-amz-content-sha256'",
-                "Access-Control-Allow-Methods": "'POST,OPTIONS'",
+                "Access-Control-Allow-Methods": "'GET,POST,DELETE,OPTIONS'", // Add DELETE here
                 "Access-Control-Allow-Credentials": "'true'",
             };
         };
@@ -853,6 +853,24 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerId": true,
             },
         });
+        // GET /libraries/{ownerId}/share - List shared access for a library
+        shareResource.addMethod("GET", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerId": true,
+            },
+        });
+        // DELETE /libraries/{ownerId}/share/{userId} - Remove shared access
+        const shareUserResource = shareResource.addResource("{userId}");
+        shareUserResource.addMethod("DELETE", libraryApiIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerId": true,
+                "method.request.path.userId": true,
+            },
+        });
         // // POST /run endpoint
         // const runResource = api.root.addResource("run");
         // // Request model for validation
@@ -956,6 +974,14 @@ export class MediaLibraryStack extends cdk.Stack {
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/libraries/*/share`,
                     // OPTIONS preflight for /libraries/{ownerId}/share
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
+                    // GET /libraries/{ownerId}/share
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/share`,
+                    // OPTIONS preflight for /libraries/{ownerId}/share
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
+                    // DELETE /libraries/{ownerId}/share/{userId}
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/DELETE/libraries/*/share/*`,
+                    // OPTIONS preflight for /libraries/{ownerId}/share/{userId}
+                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share/*`,
                 ],
             })
         );

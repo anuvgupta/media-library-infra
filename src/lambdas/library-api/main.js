@@ -4,6 +4,7 @@ const {
     GetCommand,
     PutCommand,
     QueryCommand,
+    DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const {
@@ -48,6 +49,7 @@ exports.handler = async (event) => {
     });
 
     try {
+        console.log("event.resource=" + event.resource);
         switch (event.resource) {
             case "/libraries":
                 return await getUserLibraries(userId);
@@ -60,7 +62,24 @@ exports.handler = async (event) => {
                     userId
                 );
             case "/libraries/{ownerId}/share":
-                return await shareLibrary(event);
+                if (httpMethod === "POST") {
+                    return await shareLibrary(event);
+                } else if (httpMethod === "GET") {
+                    return await listSharedAccesses(
+                        pathParameters.ownerId,
+                        userId
+                    );
+                }
+                break;
+            case "/libraries/{ownerId}/share/{userId}":
+                if (httpMethod === "DELETE") {
+                    return await removeSharedAccess(
+                        pathParameters.ownerId,
+                        pathParameters.userId,
+                        userId
+                    );
+                }
+                break;
             default:
                 return createResponse(404, { error: "Endpoint not found" });
         }
@@ -291,6 +310,167 @@ async function shareLibrary(event) {
         });
     } catch (error) {
         console.error("Error sharing library:", error);
+        return createResponse(500, { error: "Internal server error" });
+    }
+}
+
+// List all users who have access to a library
+async function listSharedAccesses(ownerId, userId) {
+    try {
+        console.log(
+            "Listing shared accesses for owner:",
+            ownerId,
+            "requested by:",
+            userId
+        );
+
+        // Validate requesting user owns the library
+        if (ownerId !== userId) {
+            return createResponse(403, {
+                error: "You can only view shared accesses for your own library",
+            });
+        }
+
+        // Check if library exists
+        const library = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerId },
+            })
+        );
+
+        if (!library.Item) {
+            return createResponse(404, { error: "Library not found" });
+        }
+
+        // Get all shared accesses for this library
+        const sharedAccesses = await dynamodb.send(
+            new QueryCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                KeyConditionExpression: "ownerId = :ownerId",
+                ExpressionAttributeValues: {
+                    ":ownerId": ownerId,
+                },
+            })
+        );
+
+        // Enrich with user details from Cognito
+        const enrichedAccesses = [];
+        for (const access of sharedAccesses.Items) {
+            try {
+                // Get user details from Cognito
+                const getUserCommand = new AdminGetUserCommand({
+                    UserPoolId: USER_POOL_ID,
+                    Username: access.sharedWithUserId,
+                });
+                const userResult = await cognitoClient.send(getUserCommand);
+
+                const username = userResult.Username;
+                const email = userResult.UserAttributes.find(
+                    (attr) => attr.Name === "email"
+                )?.Value;
+
+                enrichedAccesses.push({
+                    sharedWithUserId: access.sharedWithUserId,
+                    username: username,
+                    email: email,
+                    sharedAt: access.sharedAt,
+                    permissions: access.permissions,
+                });
+            } catch (error) {
+                console.warn(
+                    "Could not fetch user details for:",
+                    access.sharedWithUserId,
+                    error.message
+                );
+                // Include the access even if we can't get user details
+                enrichedAccesses.push({
+                    sharedWithUserId: access.sharedWithUserId,
+                    username: null,
+                    email: null,
+                    sharedAt: access.sharedAt,
+                    permissions: access.permissions,
+                });
+            }
+        }
+
+        const result = {
+            libraryOwnerId: ownerId,
+            libraryAccessType: library.Item.accessType,
+            sharedAccesses: enrichedAccesses,
+            totalSharedUsers: enrichedAccesses.length,
+        };
+
+        return createResponse(200, result);
+    } catch (error) {
+        console.error("Error listing shared accesses:", error);
+        return createResponse(500, { error: "Internal server error" });
+    }
+}
+
+// Remove shared access for a specific user
+async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
+    try {
+        console.log(
+            "Removing shared access for owner:",
+            ownerId,
+            "shared with:",
+            sharedWithUserId,
+            "requested by:",
+            userId
+        );
+
+        // Validate requesting user owns the library
+        if (ownerId !== userId) {
+            return createResponse(403, {
+                error: "You can only remove shared access from your own library",
+            });
+        }
+
+        // Check if library exists
+        const library = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerId },
+            })
+        );
+
+        if (!library.Item) {
+            return createResponse(404, { error: "Library not found" });
+        }
+
+        // Check if shared access exists
+        const sharedAccess = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerId: ownerId,
+                    sharedWithUserId: sharedWithUserId,
+                },
+            })
+        );
+
+        if (!sharedAccess.Item) {
+            return createResponse(404, { error: "Shared access not found" });
+        }
+
+        // Remove the shared access
+        await dynamodb.send(
+            new DeleteCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerId: ownerId,
+                    sharedWithUserId: sharedWithUserId,
+                },
+            })
+        );
+
+        return createResponse(200, {
+            message: "Shared access removed successfully",
+            removedUserId: sharedWithUserId,
+        });
+    } catch (error) {
+        console.error("Error removing shared access:", error);
         return createResponse(500, { error: "Internal server error" });
     }
 }
