@@ -7,16 +7,16 @@ const {
     DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
-const {
-    CognitoIdentityProviderClient,
-    ListUsersCommand,
-    AdminGetUserCommand,
-} = require("@aws-sdk/client-cognito-identity-provider");
+// const {
+//     CognitoIdentityProviderClient,
+//     ListUsersCommand,
+//     AdminGetUserCommand,
+// } = require("@aws-sdk/client-cognito-identity-provider");
 
 // Env vars
 const AWS_REGION = process.env.AWS_REGION;
-const USER_POOL_ID = process.env.USER_POOL_ID;
-const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
+// const USER_POOL_ID = process.env.USER_POOL_ID;
+// const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
 const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
@@ -26,23 +26,23 @@ const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const dynamodbClient = new DynamoDBClient({});
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 const s3 = new S3Client({});
-const cognitoClient = new CognitoIdentityProviderClient({
-    region: AWS_REGION,
-});
+// const cognitoClient = new CognitoIdentityProviderClient({
+//     region: AWS_REGION,
+// });
 
 exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
     console.log("Starting request handler");
 
-    // Extract user ID from Cognito JWT token
-    const authorizer = requestContext.authorizer;
-    if (!authorizer) {
-        return createResponse(401, {
-            error: "Cognito authorizer not provided",
-        });
-    }
-    const userId = authorizer.claims.sub;
-    console.log("User ID:", userId);
+    // // Extract user ID from Cognito JWT token
+    // const authorizer = requestContext.authorizer;
+    // if (!authorizer) {
+    //     return createResponse(401, {
+    //         error: "Cognito authorizer not provided",
+    //     });
+    // }
+    // const userId = authorizer.claims.sub;
+    // console.log("User ID:", userId);
 
     // Extract Identity ID from request context
     const identityId = requestContext.identity?.cognitoIdentityId;
@@ -138,7 +138,7 @@ async function getUserLibraries(identityId) {
         const sharedLibraries = await dynamodb.send(
             new QueryCommand({
                 TableName: LIBRARY_SHARED_TABLE,
-                IndexName: "SharedWithUserIndex",
+                IndexName: "SharedWithIdentityIndex",
                 KeyConditionExpression: "sharedWithIdentityId = :identityId",
                 ExpressionAttributeValues: {
                     ":identityId": identityId,

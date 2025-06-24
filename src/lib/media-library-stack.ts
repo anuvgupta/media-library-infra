@@ -503,16 +503,16 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             }
         );
-        // Create Cognito authorizer for authenticated endpoints
-        const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(
-            this,
-            "CognitoAuthorizer",
-            {
-                cognitoUserPools: [userPool],
-                authorizerName: "CognitoAuthorizer",
-                identitySource: "method.request.header.Authorization",
-            }
-        );
+        // // Create Cognito authorizer for authenticated endpoints
+        // const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(
+        //     this,
+        //     "CognitoAuthorizer",
+        //     {
+        //         cognitoUserPools: [userPool],
+        //         authorizerName: "CognitoAuthorizer",
+        //         identitySource: "method.request.header.Authorization",
+        //     }
+        // );
         // Identity pool
         const identityPool = new cognito.CfnIdentityPool(
             this,
@@ -731,13 +731,13 @@ export class MediaLibraryStack extends cdk.Stack {
         librarySharedTable.grantReadWriteData(libraryApiLambda);
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantRead(libraryApiLambda);
-        libraryApiLambda.addToRolePolicy(
-            new iam.PolicyStatement({
-                effect: iam.Effect.ALLOW,
-                actions: ["cognito-idp:ListUsers", "cognito-idp:AdminGetUser"],
-                resources: [userPool.userPoolArn],
-            })
-        );
+        // libraryApiLambda.addToRolePolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["cognito-idp:ListUsers", "cognito-idp:AdminGetUser"],
+        //         resources: [userPool.userPoolArn],
+        //     })
+        // );
 
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({
@@ -893,37 +893,23 @@ export class MediaLibraryStack extends cdk.Stack {
         //         },
         //     }
         // );
-        // const runpodsStatusIntegration = new apigateway.HttpIntegration(
-        //     `${props.runpodsEndpoint}/status/{jobId}`,
-        //     {
-        //         httpMethod: "GET",
-        //         options: {
-        //             requestParameters: {
-        //                 "integration.request.header.Authorization": `'Bearer ${props.runpodsApiKey}'`,
-        //                 "integration.request.path.jobId":
-        //                     "method.request.path.jobId",
-        //             },
-        //         },
-        //     }
-        // );
-        // const uploadUrlLambdaIntegration = new apigateway.LambdaIntegration(
-        //     uploadUrlLambda
-        // );
 
         /* API GATEWAY - REQUEST HANDLERS */
         // GET /libraries - Get user's accessible libraries
         const librariesResource = api.root.addResource("libraries");
         librariesResource.addMethod("GET", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
         });
         // GET /libraries/{ownerIdentityId}/library - Get specific library metadata
         const ownerLibraryResource =
             librariesResource.addResource("{ownerIdentityId}");
         const libraryJsonResource = ownerLibraryResource.addResource("library");
         libraryJsonResource.addMethod("GET", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -933,8 +919,9 @@ export class MediaLibraryStack extends cdk.Stack {
         const movieResource = moviesResource.addResource("{movieId}");
         const playlistResource = movieResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.movieId": true,
@@ -943,16 +930,18 @@ export class MediaLibraryStack extends cdk.Stack {
         // POST /libraries/{ownerIdentityId}/share - Share library with another user
         const shareResource = ownerLibraryResource.addResource("share");
         shareResource.addMethod("POST", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
         });
         // GET /libraries/{ownerIdentityId}/share - List shared access for a library
         shareResource.addMethod("GET", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -962,72 +951,14 @@ export class MediaLibraryStack extends cdk.Stack {
             "{shareWithIdentityId}"
         );
         shareUserResource.addMethod("DELETE", libraryApiIntegration, {
-            authorizer: cognitoAuthorizer,
-            authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.shareWithIdentityId": true,
             },
         });
-        // // POST /run endpoint
-        // const runResource = api.root.addResource("run");
-        // // Request model for validation
-        // const runRequestModel = api.addModel("RunRequestModel", {
-        //     contentType: "application/json",
-        //     modelName: `RunRequestModel${this.account}${props.stageName}`,
-        //     schema: {
-        //         type: apigateway.JsonSchemaType.OBJECT,
-        //         required: ["input"],
-        //         properties: {
-        //             input: {
-        //                 type: apigateway.JsonSchemaType.OBJECT,
-        //                 required: ["prompt"],
-        //                 properties: {
-        //                     prompt: { type: apigateway.JsonSchemaType.STRING },
-        //                     workflow: {
-        //                         type: apigateway.JsonSchemaType.STRING,
-        //                     },
-        //                     aspect_ratio: {
-        //                         type: apigateway.JsonSchemaType.STRING,
-        //                     },
-        //                     input_filename: {
-        //                         type: apigateway.JsonSchemaType.STRING,
-        //                     },
-        //                     output_format: {
-        //                         type: apigateway.JsonSchemaType.STRING,
-        //                     },
-        //                 },
-        //             },
-        //         },
-        //     },
-        // });
-        // const runMethod = runResource.addMethod("POST", runpodsRunIntegration, {
-        //     requestModels: {
-        //         "application/json": runRequestModel,
-        //     },
-        //     requestValidator: new apigateway.RequestValidator(
-        //         this,
-        //         `RunRequestValidator`,
-        //         {
-        //             restApi: api,
-        //             validateRequestBody: true,
-        //         }
-        //     ),
-        // });
-        // // GET /status/{jobId} endpoint
-        // const statusResource = api.root
-        //     .addResource("status")
-        //     .addResource("{jobId}");
-        // const statusMethod = statusResource.addMethod(
-        //     "GET",
-        //     runpodsStatusIntegration,
-        //     {
-        //         requestParameters: {
-        //             "method.request.path.jobId": true,
-        //         },
-        //         // methodResponses: [{ statusCode: "200" }],
-        //     }
-        // );
 
         /* API GATEWAY - CUSTOM DOMAINS */
         // Create the custom domain in API Gateway
@@ -1051,44 +982,28 @@ export class MediaLibraryStack extends cdk.Stack {
         /* API GATEWAY - ACCESS */
         // Add execute-api permission to roles
         // Grant authenticated users permission to call the API Gateway endpoints
+        const getApiResource = (method: string, path: string) =>
+            `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/${method}/${path}`;
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
                 actions: ["execute-api:Invoke"],
                 resources: [
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/library`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/library`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/movies/*/playlist`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/movies/*/playlist`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/libraries/*/share`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/share`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/DELETE/libraries/*/share/*`,
-                    `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share/*`,
+                    getApiResource("GET", "libraries"),
+                    getApiResource("OPTIONS", "libraries"),
+                    getApiResource("GET", "libraries/*/library"),
+                    getApiResource("OPTIONS", "libraries/*/library"),
+                    getApiResource("GET", "libraries/*/movies/*/playlist"),
+                    getApiResource("OPTIONS", "libraries/*/movies/*/playlist"),
+                    getApiResource("POST", "libraries/*/share"),
+                    getApiResource("OPTIONS", "libraries/*/share"),
+                    getApiResource("GET", "libraries/*/share"),
+                    getApiResource("OPTIONS", "libraries/*/share"),
+                    getApiResource("DELETE", "libraries/*/share/*"),
+                    getApiResource("OPTIONS", "libraries/*/share/*"),
                 ],
             })
         );
-        // unauthRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["execute-api:Invoke"],
-        //         resources: [
-        //             // POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/run`,
-        //             // OPTIONS preflight for POST methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/upload`,
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/run`,
-        //             // GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/status/*`,
-        //             // OPTIONS preflight for GET methods
-        //             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/status/*`,
-        //         ],
-        //     })
-        // );
 
         /* API GATEWAY - THROTTLING */
         // const apiLimits = calculateTPS(props.throttlingConfig);
