@@ -3,6 +3,7 @@
 import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
@@ -115,6 +116,28 @@ export class MediaLibraryStack extends cdk.Stack {
                 type: dynamodb.AttributeType.STRING,
             },
             projectionType: dynamodb.ProjectionType.ALL,
+        });
+
+        /* SQS QUEUE - WORKER COMMANDS */
+        // Create SQS queue for worker commands
+        const workerCommandQueue = new sqs.Queue(this, "WorkerCommandQueue", {
+            queueName: `media-worker-commands-${props.stageName}`,
+            // Messages will be held for 14 days max
+            retentionPeriod: cdk.Duration.days(14),
+            // Allow 5 minutes for processing before message becomes visible again
+            visibilityTimeout: cdk.Duration.minutes(5),
+            // Dead letter queue after 3 failed attempts
+            deadLetterQueue: {
+                queue: new sqs.Queue(this, "WorkerCommandDLQ", {
+                    queueName: `media-worker-commands-dlq-${props.stageName}`,
+                    retentionPeriod: cdk.Duration.days(14),
+                }),
+                maxReceiveCount: 3,
+            },
+            removalPolicy:
+                props.stageName === "dev"
+                    ? cdk.RemovalPolicy.DESTROY
+                    : cdk.RemovalPolicy.RETAIN,
         });
 
         /* S3 BUCKETS - WEBSITE BUCKET */
@@ -559,67 +582,6 @@ export class MediaLibraryStack extends cdk.Stack {
                 "sts:AssumeRoleWithWebIdentity"
             ),
         });
-        // Grant authenticated users read/write access to media/playlist bucket for their own content
-        authRole.addToPolicy(
-            new iam.PolicyStatement({
-                effect: iam.Effect.ALLOW,
-                actions: [
-                    "s3:PutObject",
-                    "s3:PutObjectAcl",
-                    "s3:DeleteObject",
-                    "s3:GetObject",
-                ],
-                resources: [
-                    // Users can access their own media files using Cognito identity ID
-                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
-                ],
-                // Remove the conditions block for object operations
-            })
-        );
-        authRole.addToPolicy(
-            new iam.PolicyStatement({
-                effect: iam.Effect.ALLOW,
-                actions: ["s3:ListBucket"],
-                resources: [mediaBucket.bucketArn],
-                conditions: {
-                    StringLike: {
-                        "s3:prefix": [
-                            "media/${cognito-identity.amazonaws.com:sub}/*",
-                        ],
-                    },
-                },
-            })
-        );
-        authRole.addToPolicy(
-            new iam.PolicyStatement({
-                effect: iam.Effect.ALLOW,
-                actions: [
-                    "s3:PutObject",
-                    "s3:PutObjectAcl",
-                    "s3:DeleteObject",
-                    "s3:GetObject",
-                ],
-                resources: [
-                    // Users can access their own media files using Cognito identity ID
-                    `${playlistBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
-                ],
-                // Remove the conditions block for object operations
-            })
-        );
-        authRole.addToPolicy(
-            new iam.PolicyStatement({
-                effect: iam.Effect.ALLOW,
-                actions: ["s3:ListBucket"],
-                resources: [playlistBucket.bucketArn],
-                conditions: {
-                    StringLike: {
-                        "s3:prefix": [
-                            "media/${cognito-identity.amazonaws.com:sub}/*",
-                        ],
-                    },
-                },
-            })
-        );
         // Set roles on identity pool
         const identityPoolRoleAttachment =
             new cognito.CfnIdentityPoolRoleAttachment(
@@ -633,6 +595,103 @@ export class MediaLibraryStack extends cdk.Stack {
                     },
                 }
             );
+        // Grant authenticated users read/write access to library bucket for their own content
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "s3:PutObject",
+                    // "s3:PutObjectAcl",
+                    // "s3:DeleteObject",
+                    // "s3:GetObject",
+                ],
+                resources: [
+                    // Users can access their own media files using Cognito identity ID
+                    `${libraryBucket.bucketArn}/library/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+            })
+        );
+        // Grant authenticated users read/write access to media/playlist bucket for their own content
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "s3:PutObject",
+                    // "s3:PutObjectAcl",
+                    // "s3:DeleteObject",
+                    "s3:GetObject",
+                ],
+                resources: [
+                    // Users can access their own media files using Cognito identity ID
+                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+            })
+        );
+        // authRole.addToPolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["s3:ListBucket"],
+        //         resources: [mediaBucket.bucketArn],
+        //         conditions: {
+        //             StringLike: {
+        //                 "s3:prefix": [
+        //                     "media/${cognito-identity.amazonaws.com:sub}/*",
+        //                 ],
+        //             },
+        //         },
+        //     })
+        // );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "s3:PutObject",
+                    // "s3:PutObjectAcl",
+                    // "s3:DeleteObject",
+                    "s3:GetObject",
+                ],
+                resources: [
+                    // Users can access their own media files using Cognito identity ID
+                    `${playlistBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+            })
+        );
+        // authRole.addToPolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["s3:ListBucket"],
+        //         resources: [playlistBucket.bucketArn],
+        //         conditions: {
+        //             StringLike: {
+        //                 "s3:prefix": [
+        //                     "media/${cognito-identity.amazonaws.com:sub}/*",
+        //                 ],
+        //             },
+        //         },
+        //     })
+        // );
+        // // Grant authenticated users permission to send messages to SQS with their user ID
+        // authRole.addToPolicy(
+        //     new iam.PolicyStatement({
+        //         effect: iam.Effect.ALLOW,
+        //         actions: ["sqs:SendMessage", "sqs:GetQueueAttributes"],
+        //         resources: [workerCommandQueue.queueArn],
+        //         conditions: {
+        //             StringEquals: {
+        //                 "sqs:MessageAttribute/userId":
+        //                     "${cognito-identity.amazonaws.com:sub}",
+        //             },
+        //         },
+        //     })
+        // );
+        // Grant authenticated users permission to receive only their own messages
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+                resources: [workerCommandQueue.queueArn],
+            })
+        );
 
         /* IAM - SOURCE WORKER USER */
         // IAM user for source worker to upload to cache bucket
@@ -1276,5 +1335,13 @@ export class MediaLibraryStack extends cdk.Stack {
         //     value: `runTPS=${apiLimits.limits.runTPS}tps, runTPSBurst=${apiLimits.limits.runTPSBurst}tps, ipRunLimit=${apiLimits.limits.ipRunLimit} runs per ${apiLimits.inputs.ipLimitWindowMinutes}min, statusTPS=${apiLimits.limits.statusTPS}tps, statusTPSBurst=${apiLimits.limits.statusTPSBurst}tps, ipStatusLimit=${apiLimits.limits.ipStatusLimit} status checks per ${apiLimits.inputs.ipLimitWindowMinutes}min`,
         //     description: `TPS limits, calculated from maxWorkers=${apiLimits.inputs.maxWorkers}, generationTimeSeconds=${apiLimits.inputs.generationTimeSeconds}, statusPollIntervalSeconds=${apiLimits.inputs.statusPollIntervalSeconds}, imagesPerSession=${apiLimits.inputs.imagesPerSession}, averageThinkTimeSeconds=${apiLimits.inputs.averageThinkTimeSeconds}`,
         // });
+        new cdk.CfnOutput(this, "WorkerCommandQueueUrl", {
+            value: workerCommandQueue.queueUrl,
+            description: "SQS Queue URL for worker commands",
+        });
+        new cdk.CfnOutput(this, "WorkerCommandQueueArn", {
+            value: workerCommandQueue.queueArn,
+            description: "SQS Queue ARN for worker commands",
+        });
     }
 }
