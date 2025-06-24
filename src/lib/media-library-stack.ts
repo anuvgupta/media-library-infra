@@ -464,6 +464,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 accessTokenValidity: cdk.Duration.hours(1),
                 idTokenValidity: cdk.Duration.hours(1),
                 refreshTokenValidity: cdk.Duration.days(30),
+                enableTokenRevocation: true,
                 // OAuth settings (optional, for future social login support)
                 oAuth: {
                     flows: {
@@ -558,11 +559,17 @@ export class MediaLibraryStack extends cdk.Stack {
                 "sts:AssumeRoleWithWebIdentity"
             ),
         });
-        // Grant authenticated users read access to media/playlist bucket for their own content
+        // Grant authenticated users read/write access to media/playlist bucket for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: ["s3:GetObject", "s3:ListBucket"],
+                actions: [
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:DeleteObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                ],
                 resources: [
                     // Allow access to the bucket itself for listing
                     mediaBucket.bucketArn,
@@ -578,11 +585,17 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             })
         );
-        // Grant authenticated users read access to playlist bucket for their own content
+        // Grant authenticated users read/write access to playlist bucket for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: ["s3:GetObject", "s3:ListBucket"],
+                actions: [
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:DeleteObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                ],
                 resources: [
                     // Allow access to the playlist bucket itself for listing
                     playlistBucket.bucketArn,
@@ -677,7 +690,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 "Access-Control-Allow-Origin": `'${allowedOrigin}'`,
                 "Access-Control-Allow-Headers":
                     "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,x-amz-content-sha256'",
-                "Access-Control-Allow-Methods": "'GET,POST,DELETE,OPTIONS'", // Add DELETE here
+                "Access-Control-Allow-Methods": "'GET,POST,DELETE,OPTIONS'",
                 "Access-Control-Allow-Credentials": "'true'",
             };
         };

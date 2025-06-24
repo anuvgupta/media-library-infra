@@ -52,20 +52,27 @@ exports.handler = async (event) => {
         console.log("event.resource=" + event.resource);
         switch (event.resource) {
             case "/libraries":
-                return await getUserLibraries(userId);
+                if (httpMethod === "GET") {
+                    return await getUserLibraries(userId);
+                }
             case "/libraries/{ownerId}/library":
-                return await getLibraryJson(pathParameters.ownerId, userId);
+                if (httpMethod === "GET") {
+                    return await getLibraryJson(pathParameters.ownerId, userId);
+                }
             case "/libraries/{ownerId}/movies/{movieId}/playlist":
-                return await getMoviePlaylist(
-                    pathParameters.ownerId,
-                    pathParameters.movieId,
-                    userId
-                );
+                if (httpMethod === "GET") {
+                    return await getMoviePlaylist(
+                        pathParameters.ownerId,
+                        pathParameters.movieId,
+                        userId
+                    );
+                }
             case "/libraries/{ownerId}/share":
                 if (httpMethod === "POST") {
-                    return await shareLibrary(event);
+                    return await shareLibrary(pathParameters.ownerId, userId);
                 } else if (httpMethod === "GET") {
                     return await listSharedAccesses(
+                        event.body,
                         pathParameters.ownerId,
                         userId
                     );
@@ -81,7 +88,9 @@ exports.handler = async (event) => {
                 }
                 break;
             default:
-                return createResponse(404, { error: "Endpoint not found" });
+                return createResponse(404, {
+                    error: "Endpoint/method not found",
+                });
         }
     } catch (error) {
         console.error("Error:", error);
@@ -222,10 +231,8 @@ async function getMoviePlaylist(ownerId, movieId, userId) {
 }
 
 // Share library with user
-async function shareLibrary(event) {
-    const { ownerId } = event.pathParameters;
-    let { shareWithIdentifier, permissions = "read" } = JSON.parse(event.body);
-    const requestingUserId = event.requestContext.authorizer.claims.sub;
+async function shareLibrary(body, ownerId, requestingUserId) {
+    let { shareWithIdentifier, permissions = "read" } = JSON.parse(body);
 
     // Validate requesting user owns the library
     if (ownerId !== requestingUserId) {
