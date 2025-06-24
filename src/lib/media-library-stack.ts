@@ -21,15 +21,15 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 
 interface LibraryAccessRecord {
-    ownerId: string;
+    ownerIdentityId: string;
     accessType: "private" | "shared" | "public";
     createdAt: string;
     updatedAt: string;
 }
 
 interface LibrarySharedRecord {
-    ownerId: string;
-    sharedWithUserId: string;
+    ownerIdentityId: string;
+    sharedWithIdentityId: string;
     sharedAt: string;
     permissions: "read" | "write";
 }
@@ -74,7 +74,7 @@ export class MediaLibraryStack extends cdk.Stack {
             {
                 tableName: `media-library-access-${props.stageName}`,
                 partitionKey: {
-                    name: "ownerId",
+                    name: "ownerIdentityId",
                     type: dynamodb.AttributeType.STRING,
                 },
                 billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -91,11 +91,11 @@ export class MediaLibraryStack extends cdk.Stack {
             {
                 tableName: `media-library-shared-${props.stageName}`,
                 partitionKey: {
-                    name: "ownerId",
+                    name: "ownerIdentityId",
                     type: dynamodb.AttributeType.STRING,
                 }, // Owner of the library
                 sortKey: {
-                    name: "sharedWithUserId",
+                    name: "sharedWithIdentityId",
                     type: dynamodb.AttributeType.STRING,
                 }, // User who has access
                 billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -106,13 +106,13 @@ export class MediaLibraryStack extends cdk.Stack {
             }
         );
         librarySharedTable.addGlobalSecondaryIndex({
-            indexName: "SharedWithUserIndex",
+            indexName: "SharedWithIdentityIndex",
             partitionKey: {
-                name: "sharedWithUserId",
+                name: "sharedWithIdentityId",
                 type: dynamodb.AttributeType.STRING,
             },
             sortKey: {
-                name: "ownerId",
+                name: "ownerIdentityId",
                 type: dynamodb.AttributeType.STRING,
             },
             projectionType: dynamodb.ProjectionType.ALL,
@@ -546,6 +546,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
                     ALLOWED_ORIGIN: allowedOrigin,
                     USER_POOL_ID: userPool.userPoolId,
+                    IDENTITY_POOL_ID: identityPool.ref,
                 },
                 timeout: cdk.Duration.seconds(30),
             }
@@ -738,6 +739,19 @@ export class MediaLibraryStack extends cdk.Stack {
             })
         );
 
+        libraryApiLambda.addToRolePolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "cognito-identity:DescribeIdentity",
+                    "cognito-identity:ListIdentities",
+                ],
+                resources: [
+                    `arn:aws:cognito-identity:${this.region}:${this.account}:identitypool/${identityPool.ref}`,
+                ],
+            })
+        );
+
         /* API GATEWAY - CORS CONFIG */
         const apiCorsConfig = {
             allowOrigins: [allowedOrigin],
@@ -903,17 +917,18 @@ export class MediaLibraryStack extends cdk.Stack {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
         });
-        // GET /libraries/{ownerId}/library - Get specific library metadata
-        const ownerLibraryResource = librariesResource.addResource("{ownerId}");
+        // GET /libraries/{ownerIdentityId}/library - Get specific library metadata
+        const ownerLibraryResource =
+            librariesResource.addResource("{ownerIdentityId}");
         const libraryJsonResource = ownerLibraryResource.addResource("library");
         libraryJsonResource.addMethod("GET", libraryApiIntegration, {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
-                "method.request.path.ownerId": true,
+                "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /libraries/{ownerId}/movies/{movieId}/playlist - Get movie playlist
+        // GET /libraries/{ownerIdentityId}/movies/{movieId}/playlist - Get movie playlist
         const moviesResource = ownerLibraryResource.addResource("movies");
         const movieResource = moviesResource.addResource("{movieId}");
         const playlistResource = movieResource.addResource("playlist");
@@ -921,35 +936,37 @@ export class MediaLibraryStack extends cdk.Stack {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
-                "method.request.path.ownerId": true,
+                "method.request.path.ownerIdentityId": true,
                 "method.request.path.movieId": true,
             },
         });
-        // POST /libraries/{ownerId}/share - Share library with another user
+        // POST /libraries/{ownerIdentityId}/share - Share library with another user
         const shareResource = ownerLibraryResource.addResource("share");
         shareResource.addMethod("POST", libraryApiIntegration, {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
-                "method.request.path.ownerId": true,
+                "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /libraries/{ownerId}/share - List shared access for a library
+        // GET /libraries/{ownerIdentityId}/share - List shared access for a library
         shareResource.addMethod("GET", libraryApiIntegration, {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
-                "method.request.path.ownerId": true,
+                "method.request.path.ownerIdentityId": true,
             },
         });
-        // DELETE /libraries/{ownerId}/share/{userId} - Remove shared access
-        const shareUserResource = shareResource.addResource("{userId}");
+        // DELETE /libraries/{ownerIdentityId}/share/{shareWithIdentityId} - Remove shared access
+        const shareUserResource = shareResource.addResource(
+            "{shareWithIdentityId}"
+        );
         shareUserResource.addMethod("DELETE", libraryApiIntegration, {
             authorizer: cognitoAuthorizer,
             authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
-                "method.request.path.ownerId": true,
-                "method.request.path.userId": true,
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.shareWithIdentityId": true,
             },
         });
         // // POST /run endpoint
@@ -1039,29 +1056,17 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["execute-api:Invoke"],
                 resources: [
-                    // GET /libraries
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries`,
-                    // OPTIONS preflight for /libraries
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries`,
-                    // GET /libraries/{ownerId}/library
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/library`,
-                    // OPTIONS preflight for /libraries/{ownerId}/library
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/library`,
-                    // GET /libraries/{ownerId}/movies/{movieId}/playlist
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/movies/*/playlist`,
-                    // OPTIONS preflight for /libraries/{ownerId}/movies/{movieId}/playlist
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/movies/*/playlist`,
-                    // POST /libraries/{ownerId}/share
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/POST/libraries/*/share`,
-                    // OPTIONS preflight for /libraries/{ownerId}/share
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
-                    // GET /libraries/{ownerId}/share
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/GET/libraries/*/share`,
-                    // OPTIONS preflight for /libraries/{ownerId}/share
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share`,
-                    // DELETE /libraries/{ownerId}/share/{userId}
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/DELETE/libraries/*/share/*`,
-                    // OPTIONS preflight for /libraries/{ownerId}/share/{userId}
                     `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/OPTIONS/libraries/*/share/*`,
                 ],
             })
