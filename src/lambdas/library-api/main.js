@@ -105,6 +105,15 @@ exports.handler = async (event) => {
                     );
                 }
                 break;
+            case "/libraries/{ownerIdentityId}/access":
+                if (httpMethod === "POST") {
+                    return await createOrUpdateLibraryAccess(
+                        event.body,
+                        pathParameters.ownerIdentityId,
+                        identityId
+                    );
+                }
+                break;
             default:
                 return createResponse(404, {
                     error: "Endpoint/method not found",
@@ -153,7 +162,6 @@ async function getUserLibraries(identityId) {
             sharedLibraries: sharedLibraries.Items.map((item) => ({
                 ownerIdentityId: item.ownerIdentityId,
                 sharedAt: item.sharedAt,
-                permissions: item.permissions,
             })),
         };
 
@@ -250,7 +258,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 
 // Share library with user
 async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
-    let { shareWithIdentityId, permissions = "read" } = JSON.parse(body);
+    let { shareWithIdentityId } = JSON.parse(body);
 
     // Validate requesting user owns the library
     if (ownerIdentityId !== requestingIdentityId) {
@@ -258,14 +266,6 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
             error: "You can only share your own library",
         });
     }
-
-    // Validate permissions
-    // if (!["read", "write"].includes(permissions)) {
-    //     return createResponse(400, {
-    //         error: "Permissions must be 'read' or 'write'",
-    //     });
-    // }
-    permissions = "read";
 
     try {
         // Validate the shareWithIdentityId exists (basic validation)
@@ -295,7 +295,6 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
                 ownerIdentityId,
                 sharedWithIdentityId: shareWithIdentityId,
                 sharedAt: new Date().toISOString(),
-                permissions,
             },
         };
 
@@ -304,7 +303,6 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
         return createResponse(200, {
             message: "Library shared successfully",
             sharedWith: shareWithIdentityId,
-            permissions,
         });
     } catch (error) {
         console.error("Error sharing library:", error);
@@ -357,7 +355,6 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
         const enrichedAccesses = sharedAccesses.Items.map((access) => ({
             sharedWithIdentityId: access.sharedWithIdentityId,
             sharedAt: access.sharedAt,
-            permissions: access.permissions,
         }));
 
         const result = {
@@ -476,32 +473,125 @@ async function checkLibraryAccess(ownerIdentityId, identityId) {
             return false;
         }
 
-        if (library.Item.accessType === "public") {
-            console.log("Library is public, access granted");
-            return true;
-        }
+        // if (library.Item.accessType === "public") {
+        //     console.log("Library is public, access granted");
+        //     return true;
+        // }
 
-        if (library.Item.accessType === "shared") {
-            // Check if user has shared access
-            const sharedAccess = await dynamodb.send(
-                new GetCommand({
-                    TableName: LIBRARY_SHARED_TABLE,
-                    Key: {
-                        ownerIdentityId: ownerIdentityId,
-                        sharedWithIdentityId: identityId,
-                    },
-                })
-            );
+        // Check if user has shared access
+        const sharedAccess = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: identityId,
+                },
+            })
+        );
 
-            console.log("Shared access check:", sharedAccess);
-            return !!sharedAccess.Item;
-        }
-
-        console.log("Library is private, access denied");
-        return false; // Private library, no access
+        console.log("Shared access check:", sharedAccess);
+        return !!sharedAccess.Item;
     } catch (error) {
         console.error("Error checking library access:", error);
         return false;
+    }
+}
+
+// Create or update library access record
+async function createOrUpdateLibraryAccess(
+    body,
+    ownerIdentityId,
+    requestingIdentityId
+) {
+    try {
+        console.log(
+            "Creating/updating library access for owner:",
+            ownerIdentityId,
+            "requested by:",
+            requestingIdentityId
+        );
+
+        // Validate requesting user can only modify their own library
+        if (ownerIdentityId !== requestingIdentityId) {
+            return createResponse(403, {
+                error: "You can only create/update your own library access record",
+            });
+        }
+
+        const requestData = JSON.parse(body);
+
+        // Validate required fields and sanitize input
+        const { movieCount, collectionCount, lastScanAt } = requestData;
+
+        if (
+            typeof movieCount !== "number" ||
+            typeof collectionCount !== "number"
+        ) {
+            return createResponse(400, {
+                error: "movieCount and collectionCount must be numbers",
+            });
+        }
+
+        if (!lastScanAt || !Date.parse(lastScanAt)) {
+            return createResponse(400, {
+                error: "lastScanAt must be a valid ISO date string",
+            });
+        }
+
+        const currentTime = new Date().toISOString();
+
+        // Check if record already exists
+        const existingRecord = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerIdentityId },
+            })
+        );
+
+        // Prepare the record
+        const libraryRecord = {
+            ownerIdentityId: ownerIdentityId,
+            updatedAt: currentTime,
+            movieCount: movieCount,
+            collectionCount: collectionCount,
+            lastScanAt: lastScanAt,
+        };
+
+        // If record exists, preserve the createdAt timestamp
+        if (existingRecord.Item) {
+            libraryRecord.createdAt = existingRecord.Item.createdAt;
+            console.log("Updating existing LibraryAccess record");
+        } else {
+            libraryRecord.createdAt = currentTime;
+            console.log("Creating new LibraryAccess record");
+        }
+
+        // Put the record (this will create or update)
+        await dynamodb.send(
+            new PutCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Item: libraryRecord,
+            })
+        );
+
+        console.log(
+            `LibraryAccess record ${
+                existingRecord.Item ? "updated" : "created"
+            } successfully`
+        );
+
+        return createResponse(200, {
+            message: `Library access record ${
+                existingRecord.Item ? "updated" : "created"
+            } successfully`,
+            record: libraryRecord,
+        });
+    } catch (error) {
+        console.error("Error creating/updating library access:", error);
+        return createResponse(500, {
+            error: "Internal server error",
+            details: error.message,
+        });
     }
 }
 
