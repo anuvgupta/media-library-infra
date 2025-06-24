@@ -160,6 +160,7 @@ async function getUserLibraries(identityId) {
         const result = {
             ownedLibrary: ownedLibrary.Item || null,
             sharedLibraries: sharedLibraries.Items.map((item) => ({
+                ownerUsername: item.ownerUsername,
                 ownerIdentityId: item.ownerIdentityId,
                 sharedAt: item.sharedAt,
             })),
@@ -258,7 +259,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 
 // Share library with user
 async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
-    let { shareWithIdentityId } = JSON.parse(body);
+    let { ownerUsername, shareWithIdentityId } = JSON.parse(body);
 
     // Validate requesting user owns the library
     if (ownerIdentityId !== requestingIdentityId) {
@@ -292,6 +293,7 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
         const shareParams = {
             TableName: LIBRARY_SHARED_TABLE,
             Item: {
+                ownerUsername,
                 ownerIdentityId,
                 sharedWithIdentityId: shareWithIdentityId,
                 sharedAt: new Date().toISOString(),

@@ -30,6 +30,7 @@ interface LibraryAccessRecord {
 
 interface LibrarySharedRecord {
     ownerIdentityId: string;
+    ownerUsername: string;
     sharedWithIdentityId: string;
     sharedAt: string;
 }
