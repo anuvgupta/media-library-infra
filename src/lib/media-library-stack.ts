@@ -652,7 +652,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 ],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
-                    `${playlistBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                    `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
