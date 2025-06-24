@@ -16,6 +16,7 @@ const {
 // Env vars
 const AWS_REGION = process.env.AWS_REGION;
 const USER_POOL_ID = process.env.USER_POOL_ID;
+const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
 const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
@@ -31,6 +32,7 @@ const cognitoClient = new CognitoIdentityProviderClient({
 
 exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
+    console.log("Starting request handler");
 
     // Extract user ID from Cognito JWT token
     const authorizer = requestContext.authorizer;
@@ -40,11 +42,21 @@ exports.handler = async (event) => {
         });
     }
     const userId = authorizer.claims.sub;
+    console.log("User ID:", userId);
+
+    // Extract Identity ID from request context
+    const identityId = requestContext.identity?.cognitoIdentityId;
+    if (!identityId) {
+        return createResponse(401, {
+            error: "Cognito Identity ID not provided",
+        });
+    }
+    console.log("Identity ID:", identityId);
 
     console.log("Request:", {
         httpMethod,
         pathParameters,
-        userId,
+        identityId,
         resource: event.resource,
     });
 
@@ -53,37 +65,43 @@ exports.handler = async (event) => {
         switch (event.resource) {
             case "/libraries":
                 if (httpMethod === "GET") {
-                    return await getUserLibraries(userId);
+                    return await getUserLibraries(identityId);
                 }
-            case "/libraries/{ownerId}/library":
+            case "/libraries/{ownerIdentityId}/library":
                 if (httpMethod === "GET") {
-                    return await getLibraryJson(pathParameters.ownerId, userId);
-                }
-            case "/libraries/{ownerId}/movies/{movieId}/playlist":
-                if (httpMethod === "GET") {
-                    return await getMoviePlaylist(
-                        pathParameters.ownerId,
-                        pathParameters.movieId,
-                        userId
+                    return await getLibraryJson(
+                        pathParameters.ownerIdentityId,
+                        identityId
                     );
                 }
-            case "/libraries/{ownerId}/share":
+            case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist":
+                if (httpMethod === "GET") {
+                    return await getMoviePlaylist(
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId
+                    );
+                }
+            case "/libraries/{ownerIdentityId}/share":
                 if (httpMethod === "POST") {
-                    return await shareLibrary(pathParameters.ownerId, userId);
+                    return await shareLibrary(
+                        event.body,
+                        pathParameters.ownerIdentityId,
+                        identityId
+                    );
                 } else if (httpMethod === "GET") {
                     return await listSharedAccesses(
-                        event.body,
-                        pathParameters.ownerId,
-                        userId
+                        pathParameters.ownerIdentityId,
+                        identityId
                     );
                 }
                 break;
-            case "/libraries/{ownerId}/share/{userId}":
+            case "/libraries/{ownerIdentityId}/share/{shareWithIdentityId}":
                 if (httpMethod === "DELETE") {
                     return await removeSharedAccess(
-                        pathParameters.ownerId,
-                        pathParameters.userId,
-                        userId
+                        pathParameters.ownerIdentityId,
+                        pathParameters.shareWithIdentityId,
+                        identityId
                     );
                 }
                 break;
@@ -102,15 +120,15 @@ exports.handler = async (event) => {
 };
 
 // Get all libraries accessible to the user
-async function getUserLibraries(userId) {
+async function getUserLibraries(identityId) {
     try {
-        console.log("Getting libraries for user:", userId);
+        console.log("Getting libraries for identity:", identityId);
 
         // Get user's own library
         const ownedLibrary = await dynamodb.send(
             new GetCommand({
                 TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerId: userId },
+                Key: { ownerIdentityId: identityId },
             })
         );
 
@@ -121,9 +139,9 @@ async function getUserLibraries(userId) {
             new QueryCommand({
                 TableName: LIBRARY_SHARED_TABLE,
                 IndexName: "SharedWithUserIndex",
-                KeyConditionExpression: "sharedWithUserId = :userId",
+                KeyConditionExpression: "sharedWithIdentityId = :identityId",
                 ExpressionAttributeValues: {
-                    ":userId": userId,
+                    ":identityId": identityId,
                 },
             })
         );
@@ -133,7 +151,7 @@ async function getUserLibraries(userId) {
         const result = {
             ownedLibrary: ownedLibrary.Item || null,
             sharedLibraries: sharedLibraries.Items.map((item) => ({
-                ownerId: item.ownerId,
+                ownerIdentityId: item.ownerIdentityId,
                 sharedAt: item.sharedAt,
                 permissions: item.permissions,
             })),
@@ -147,17 +165,17 @@ async function getUserLibraries(userId) {
 }
 
 // Get library.json for a specific user's library
-async function getLibraryJson(ownerId, userId) {
+async function getLibraryJson(ownerIdentityId, identityId) {
     try {
         console.log(
             "Getting library JSON for owner:",
-            ownerId,
+            ownerIdentityId,
             "requested by:",
-            userId
+            identityId
         );
 
         // Check if user has access to this library
-        const hasAccess = await checkLibraryAccess(ownerId, userId);
+        const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
         if (!hasAccess) {
             return createResponse(403, {
                 error: "Access denied to this library",
@@ -167,7 +185,7 @@ async function getLibraryJson(ownerId, userId) {
         // Get the library.json file from S3
         const s3Params = {
             Bucket: LIBRARY_BUCKET,
-            Key: `library/${ownerId}/library.json`,
+            Key: `library/${ownerIdentityId}/library.json`,
         };
 
         console.log("S3 params:", s3Params);
@@ -186,19 +204,19 @@ async function getLibraryJson(ownerId, userId) {
 }
 
 // Get playlist for a specific movie
-async function getMoviePlaylist(ownerId, movieId, userId) {
+async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
     try {
         console.log(
             "Getting playlist for owner:",
-            ownerId,
+            ownerIdentityId,
             "movie:",
             movieId,
             "requested by:",
-            userId
+            identityId
         );
 
         // Check if user has access to this library
-        const hasAccess = await checkLibraryAccess(ownerId, userId);
+        const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
         if (!hasAccess) {
             return createResponse(403, {
                 error: "Access denied to this library",
@@ -208,7 +226,7 @@ async function getMoviePlaylist(ownerId, movieId, userId) {
         // Get the playlist file from S3
         const s3Params = {
             Bucket: PLAYLIST_BUCKET,
-            Key: `media/${ownerId}/movies/${movieId}/playlist.m3u8`,
+            Key: `media/${ownerIdentityId}/movies/${movieId}/playlist.m3u8`,
         };
 
         console.log("S3 params:", s3Params);
@@ -231,11 +249,11 @@ async function getMoviePlaylist(ownerId, movieId, userId) {
 }
 
 // Share library with user
-async function shareLibrary(body, ownerId, requestingUserId) {
-    let { shareWithIdentifier, permissions = "read" } = JSON.parse(body);
+async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
+    let { shareWithIdentityId, permissions = "read" } = JSON.parse(body);
 
     // Validate requesting user owns the library
-    if (ownerId !== requestingUserId) {
+    if (ownerIdentityId !== requestingIdentityId) {
         return createResponse(403, {
             error: "You can only share your own library",
         });
@@ -250,44 +268,17 @@ async function shareLibrary(body, ownerId, requestingUserId) {
     permissions = "read";
 
     try {
-        // Find user by username or email
-        let targetUserId;
-
-        // Try to find by username first
-        try {
-            const getUserCommand = new AdminGetUserCommand({
-                UserPoolId: USER_POOL_ID,
-                Username: shareWithIdentifier,
+        // Validate the shareWithIdentityId exists (basic validation)
+        if (!shareWithIdentityId) {
+            return createResponse(400, {
+                error: "shareWithIdentityId is required",
             });
-            const userResult = await cognitoClient.send(getUserCommand);
-            targetUserId = userResult.UserAttributes.find(
-                (attr) => attr.Name === "sub"
-            )?.Value;
-        } catch (error) {
-            // If not found by username, try by email
-            const listUsersCommand = new ListUsersCommand({
-                UserPoolId: USER_POOL_ID,
-                Filter: `email = "${shareWithIdentifier}"`,
-            });
-            const usersResult = await cognitoClient.send(listUsersCommand);
-
-            if (usersResult.Users.length === 0) {
-                return createResponse(404, { error: "User not found" });
-            }
-
-            targetUserId = usersResult.Users[0].Attributes.find(
-                (attr) => attr.Name === "sub"
-            )?.Value;
-        }
-
-        if (!targetUserId) {
-            return createResponse(404, { error: "User not found" });
         }
 
         // Check if library exists and is owned by the requesting user
         const libraryParams = {
             TableName: LIBRARY_ACCESS_TABLE,
-            Key: { ownerId },
+            Key: { ownerIdentityId },
         };
 
         const libraryResult = await dynamodb.send(
@@ -301,8 +292,8 @@ async function shareLibrary(body, ownerId, requestingUserId) {
         const shareParams = {
             TableName: LIBRARY_SHARED_TABLE,
             Item: {
-                ownerId,
-                sharedWithUserId: targetUserId,
+                ownerIdentityId,
+                sharedWithIdentityId: shareWithIdentityId,
                 sharedAt: new Date().toISOString(),
                 permissions,
             },
@@ -312,7 +303,7 @@ async function shareLibrary(body, ownerId, requestingUserId) {
 
         return createResponse(200, {
             message: "Library shared successfully",
-            sharedWith: targetUserId,
+            sharedWith: shareWithIdentityId,
             permissions,
         });
     } catch (error) {
@@ -322,17 +313,17 @@ async function shareLibrary(body, ownerId, requestingUserId) {
 }
 
 // List all users who have access to a library
-async function listSharedAccesses(ownerId, userId) {
+async function listSharedAccesses(ownerIdentityId, identityId) {
     try {
         console.log(
             "Listing shared accesses for owner:",
-            ownerId,
+            ownerIdentityId,
             "requested by:",
-            userId
+            identityId
         );
 
         // Validate requesting user owns the library
-        if (ownerId !== userId) {
+        if (ownerIdentityId !== identityId) {
             return createResponse(403, {
                 error: "You can only view shared accesses for your own library",
             });
@@ -342,7 +333,7 @@ async function listSharedAccesses(ownerId, userId) {
         const library = await dynamodb.send(
             new GetCommand({
                 TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerId },
+                Key: { ownerIdentityId },
             })
         );
 
@@ -354,55 +345,23 @@ async function listSharedAccesses(ownerId, userId) {
         const sharedAccesses = await dynamodb.send(
             new QueryCommand({
                 TableName: LIBRARY_SHARED_TABLE,
-                KeyConditionExpression: "ownerId = :ownerId",
+                KeyConditionExpression: "ownerIdentityId = :ownerIdentityId",
                 ExpressionAttributeValues: {
-                    ":ownerId": ownerId,
+                    ":ownerIdentityId": ownerIdentityId,
                 },
             })
         );
 
-        // Enrich with user details from Cognito
-        const enrichedAccesses = [];
-        for (const access of sharedAccesses.Items) {
-            try {
-                // Get user details from Cognito
-                const getUserCommand = new AdminGetUserCommand({
-                    UserPoolId: USER_POOL_ID,
-                    Username: access.sharedWithUserId,
-                });
-                const userResult = await cognitoClient.send(getUserCommand);
-
-                const username = userResult.Username;
-                const email = userResult.UserAttributes.find(
-                    (attr) => attr.Name === "email"
-                )?.Value;
-
-                enrichedAccesses.push({
-                    sharedWithUserId: access.sharedWithUserId,
-                    username: username,
-                    email: email,
-                    sharedAt: access.sharedAt,
-                    permissions: access.permissions,
-                });
-            } catch (error) {
-                console.warn(
-                    "Could not fetch user details for:",
-                    access.sharedWithUserId,
-                    error.message
-                );
-                // Include the access even if we can't get user details
-                enrichedAccesses.push({
-                    sharedWithUserId: access.sharedWithUserId,
-                    username: null,
-                    email: null,
-                    sharedAt: access.sharedAt,
-                    permissions: access.permissions,
-                });
-            }
-        }
+        // Note: With IdentityId, we can't easily fetch user details from Cognito User Pool
+        // as IdentityId doesn't directly map to User Pool users
+        const enrichedAccesses = sharedAccesses.Items.map((access) => ({
+            sharedWithIdentityId: access.sharedWithIdentityId,
+            sharedAt: access.sharedAt,
+            permissions: access.permissions,
+        }));
 
         const result = {
-            libraryOwnerId: ownerId,
+            libraryOwnerIdentityId: ownerIdentityId,
             libraryAccessType: library.Item.accessType,
             sharedAccesses: enrichedAccesses,
             totalSharedUsers: enrichedAccesses.length,
@@ -416,19 +375,23 @@ async function listSharedAccesses(ownerId, userId) {
 }
 
 // Remove shared access for a specific user
-async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
+async function removeSharedAccess(
+    ownerIdentityId,
+    shareWithIdentityId,
+    identityId
+) {
     try {
         console.log(
             "Removing shared access for owner:",
-            ownerId,
+            ownerIdentityId,
             "shared with:",
-            sharedWithUserId,
+            shareWithIdentityId,
             "requested by:",
-            userId
+            identityId
         );
 
         // Validate requesting user owns the library
-        if (ownerId !== userId) {
+        if (ownerIdentityId !== identityId) {
             return createResponse(403, {
                 error: "You can only remove shared access from your own library",
             });
@@ -438,7 +401,7 @@ async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
         const library = await dynamodb.send(
             new GetCommand({
                 TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerId },
+                Key: { ownerIdentityId },
             })
         );
 
@@ -451,8 +414,8 @@ async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
             new GetCommand({
                 TableName: LIBRARY_SHARED_TABLE,
                 Key: {
-                    ownerId: ownerId,
-                    sharedWithUserId: sharedWithUserId,
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: shareWithIdentityId,
                 },
             })
         );
@@ -466,15 +429,15 @@ async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
             new DeleteCommand({
                 TableName: LIBRARY_SHARED_TABLE,
                 Key: {
-                    ownerId: ownerId,
-                    sharedWithUserId: sharedWithUserId,
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: shareWithIdentityId,
                 },
             })
         );
 
         return createResponse(200, {
             message: "Shared access removed successfully",
-            removedUserId: sharedWithUserId,
+            removedIdentityId: shareWithIdentityId,
         });
     } catch (error) {
         console.error("Error removing shared access:", error);
@@ -483,12 +446,17 @@ async function removeSharedAccess(ownerId, sharedWithUserId, userId) {
 }
 
 // Check if user has access to a library
-async function checkLibraryAccess(ownerId, userId) {
+async function checkLibraryAccess(ownerIdentityId, identityId) {
     try {
-        console.log("Checking access for owner:", ownerId, "user:", userId);
+        console.log(
+            "Checking access for owner:",
+            ownerIdentityId,
+            "identity:",
+            identityId
+        );
 
         // Owner always has access
-        if (ownerId === userId) {
+        if (ownerIdentityId === identityId) {
             console.log("User is owner, access granted");
             return true;
         }
@@ -497,7 +465,7 @@ async function checkLibraryAccess(ownerId, userId) {
         const library = await dynamodb.send(
             new GetCommand({
                 TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerId },
+                Key: { ownerIdentityId },
             })
         );
 
@@ -519,8 +487,8 @@ async function checkLibraryAccess(ownerId, userId) {
                 new GetCommand({
                     TableName: LIBRARY_SHARED_TABLE,
                     Key: {
-                        ownerId: ownerId,
-                        sharedWithUserId: userId,
+                        ownerIdentityId: ownerIdentityId,
+                        sharedWithIdentityId: identityId,
                     },
                 })
             );
@@ -546,7 +514,7 @@ function createResponse(statusCode, body, contentType = "application/json") {
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Headers":
                 "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
-            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
         },
         body: typeof body === "string" ? body : JSON.stringify(body),
     };
