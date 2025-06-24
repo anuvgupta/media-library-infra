@@ -70,9 +70,9 @@ export class MediaLibraryStack extends cdk.Stack {
         // Main table for library ownership and access type
         const libraryAccessTable = new dynamodb.Table(
             this,
-            "LibraryAccessTable",
+            "LibraryAccessTableV2",
             {
-                tableName: `media-library-access-${props.stageName}`,
+                // tableName: `media-library-access-${props.stageName}`,
                 partitionKey: {
                     name: "ownerIdentityId",
                     type: dynamodb.AttributeType.STRING,
@@ -87,9 +87,9 @@ export class MediaLibraryStack extends cdk.Stack {
         // Table for library sharing relationships - cleaner structure
         const librarySharedTable = new dynamodb.Table(
             this,
-            "LibrarySharedTable",
+            "LibrarySharedTableV2",
             {
-                tableName: `media-library-shared-${props.stageName}`,
+                // tableName: `media-library-shared-${props.stageName}`,
                 partitionKey: {
                     name: "ownerIdentityId",
                     type: dynamodb.AttributeType.STRING,
@@ -813,7 +813,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 retention: logs.RetentionDays.ONE_WEEK,
             }
         );
-        const api = new apigateway.RestApi(this, "MediaLibraryApi", {
+        const api = new apigateway.RestApi(this, "MediaLibraryApiV2", {
             restApiName: `MediaLibraryAPI-${this.account}-${props.stageName}`,
             defaultCorsPreflightOptions: apiCorsConfig,
             // defaultMethodOptions: {
