@@ -568,14 +568,19 @@ export class MediaLibraryStack extends cdk.Stack {
                     "s3:PutObjectAcl",
                     "s3:DeleteObject",
                     "s3:GetObject",
-                    "s3:ListBucket",
                 ],
                 resources: [
-                    // Allow access to the bucket itself for listing
-                    mediaBucket.bucketArn,
-                    // Users can read their own media files using Cognito identity ID
+                    // Users can access their own media files using Cognito identity ID
                     `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
+                // Remove the conditions block for object operations
+            })
+        );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:ListBucket"],
+                resources: [mediaBucket.bucketArn],
                 conditions: {
                     StringLike: {
                         "s3:prefix": [
@@ -585,7 +590,6 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             })
         );
-        // Grant authenticated users read/write access to playlist bucket for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
@@ -594,14 +598,19 @@ export class MediaLibraryStack extends cdk.Stack {
                     "s3:PutObjectAcl",
                     "s3:DeleteObject",
                     "s3:GetObject",
-                    "s3:ListBucket",
                 ],
                 resources: [
-                    // Allow access to the playlist bucket itself for listing
-                    playlistBucket.bucketArn,
-                    // Users can read their own playlist files using Cognito identity ID
+                    // Users can access their own media files using Cognito identity ID
                     `${playlistBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
+                // Remove the conditions block for object operations
+            })
+        );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:ListBucket"],
+                resources: [playlistBucket.bucketArn],
                 conditions: {
                     StringLike: {
                         "s3:prefix": [
