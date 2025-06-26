@@ -15,7 +15,11 @@ if (!stage) {
 }
 
 // Validate environment variables
-const requiredEnvVars: any = [];
+const tmdbApiAccessTokenName =
+    stage === "prod"
+        ? "TMDB_API_ACCESS_TOKEN_PROD"
+        : "TMDB_API_ACCESS_TOKEN_DEV";
+const requiredEnvVars = [tmdbApiAccessTokenName];
 for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {
         throw new Error(`Missing required environment variable: ${envVar}`);
@@ -34,6 +38,10 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 new MediaLibraryStack(app, `MediaLibrary-${stage}`, {
     ...config,
     // Securely pass sensitive values from environment variables
+    tmdbAccessToken:
+        stage === "prod"
+            ? process.env.TMDB_API_ACCESS_TOKEN_PROD!
+            : process.env.TMDB_API_ACCESS_TOKEN_DEV!,
     devWebsiteUsername: process.env.DEV_WEBSITE_USERNAME!,
     devWebsitePassword: process.env.DEV_WEBSITE_PASSWORD!,
     stageName: stage,

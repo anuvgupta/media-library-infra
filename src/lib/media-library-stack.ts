@@ -44,6 +44,8 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     awsPlaylistBucketPrefix: string;
     awsWebsiteBucketPrefix: string;
     enableFirewall: boolean;
+    tmdbEndpoint: string;
+    tmdbAccessToken: string;
     throttlingConfig: any;
     devWebsiteUsername?: string;
     devWebsitePassword?: string;
@@ -636,6 +638,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 "X-Amz-Security-Token",
                 "X-Api-Key",
                 "x-amz-content-sha256",
+                "x-amz-target",
             ],
             maxAge: cdk.Duration.minutes(10),
             allowCredentials: true,
@@ -729,18 +732,12 @@ export class MediaLibraryStack extends cdk.Stack {
             schema: {
                 type: apigateway.JsonSchemaType.OBJECT,
                 properties: {
-                    input: {
+                    dummy: {
                         type: apigateway.JsonSchemaType.OBJECT,
                         properties: {
-                            prompt: { type: apigateway.JsonSchemaType.STRING },
-                            workflow: {
-                                type: apigateway.JsonSchemaType.STRING,
-                            },
-                            aspect_ratio: {
-                                type: apigateway.JsonSchemaType.STRING,
-                            },
+                            dummy: { type: apigateway.JsonSchemaType.STRING },
                         },
-                        required: ["prompt"],
+                        required: ["dummy"],
                     },
                 },
             },
@@ -750,22 +747,21 @@ export class MediaLibraryStack extends cdk.Stack {
         const libraryApiIntegration = new apigateway.LambdaIntegration(
             libraryApiLambda
         );
-        // const runpodsRunIntegration = new apigateway.HttpIntegration(
-        //     `${props.runpodsEndpoint}/run`,
-        //     {
-        //         httpMethod: "POST",
-        //         options: {
-        //             requestParameters: {
-        //                 "integration.request.header.Authorization": `'Bearer ${props.runpodsApiKey}'`,
-        //             },
-        //             requestTemplates: {
-        //                 "application/json": `{
-        //                     "input": $input.json('$.input')
-        //                 }`,
-        //             },
-        //         },
-        //     }
-        // );
+        const tmdbSearchMovieApiIntegration = new apigateway.HttpIntegration(
+            `${props.tmdbEndpoint}/3/search/movie`,
+            {
+                httpMethod: "GET",
+                options: {
+                    requestParameters: {
+                        "integration.request.header.Authorization": `'Bearer ${props.tmdbAccessToken}'`,
+                        "integration.request.querystring.query":
+                            "method.request.querystring.query",
+                        "integration.request.querystring.year":
+                            "method.request.querystring.year",
+                    },
+                },
+            }
+        );
 
         /* API GATEWAY - REQUEST HANDLERS */
         // GET /libraries - Get user's accessible libraries
@@ -840,6 +836,20 @@ export class MediaLibraryStack extends cdk.Stack {
             // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+            },
+        });
+        // GET /metadata - Create or update library access record
+        const metadataResource = api.root.addResource("metadata");
+        metadataResource.addMethod("GET", tmdbSearchMovieApiIntegration, {
+            // authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
+            authorizationType: apigateway.AuthorizationType.NONE,
+            requestParameters: {
+                // Declare expected query parameters
+                "method.request.querystring.query": false,
+                "method.request.querystring.year": false,
+                "method.request.querystring.page": false,
             },
         });
 
@@ -1137,6 +1147,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/share/*"),
                     getApiResource("POST", "libraries/*/access"),
                     getApiResource("OPTIONS", "libraries/*/access"),
+                    getApiResource("GET", "metadata"),
+                    getApiResource("OPTIONS", "metadata"),
                 ],
             })
         );
