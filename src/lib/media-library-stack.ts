@@ -838,6 +838,15 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
+        // GET /libraries/{ownerIdentityId}/access - Get library access record
+        accessResource.addMethod("GET", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            // authorizer: cognitoAuthorizer,
+            // authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+            },
+        });
         // GET /metadata - Create or update library access record
         const metadataResource = api.root.addResource("metadata");
         metadataResource.addMethod("GET", tmdbSearchMovieApiIntegration, {
@@ -849,7 +858,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 // Declare expected query parameters
                 "method.request.querystring.query": false,
                 "method.request.querystring.year": false,
-                "method.request.querystring.page": false,
+                // "method.request.querystring.page": false,
             },
         });
 
@@ -1145,6 +1154,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/share"),
                     getApiResource("DELETE", "libraries/*/share/*"),
                     getApiResource("OPTIONS", "libraries/*/share/*"),
+                    getApiResource("GET", "libraries/*/access"),
                     getApiResource("POST", "libraries/*/access"),
                     getApiResource("OPTIONS", "libraries/*/access"),
                     getApiResource("GET", "metadata"),

@@ -112,6 +112,11 @@ exports.handler = async (event) => {
                         pathParameters.ownerIdentityId,
                         identityId
                     );
+                } else if (httpMethod === "GET") {
+                    return await getLibraryAccess(
+                        pathParameters.ownerIdentityId,
+                        identityId
+                    );
                 }
                 break;
             default:
@@ -590,6 +595,47 @@ async function createOrUpdateLibraryAccess(
         });
     } catch (error) {
         console.error("Error creating/updating library access:", error);
+        return createResponse(500, {
+            error: "Internal server error",
+            details: error.message,
+        });
+    }
+}
+
+// Get library access record
+async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
+    try {
+        console.log(
+            "Getting library access for owner:",
+            ownerIdentityId,
+            "requested by:",
+            requestingIdentityId
+        );
+
+        // Validate requesting user can only access their own library access record
+        if (ownerIdentityId !== requestingIdentityId) {
+            return createResponse(403, {
+                error: "You can only access your own library access record",
+            });
+        }
+
+        // Get the library access record
+        const result = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerIdentityId },
+            })
+        );
+
+        if (!result.Item) {
+            return createResponse(404, {
+                error: "Library access record not found",
+            });
+        }
+
+        return createResponse(200, result.Item);
+    } catch (error) {
+        console.error("Error getting library access:", error);
         return createResponse(500, {
             error: "Internal server error",
             details: error.message,
