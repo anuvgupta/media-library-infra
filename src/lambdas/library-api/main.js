@@ -407,7 +407,7 @@ async function resolveToUsername(sharedWith) {
                 Limit: 1,
             };
 
-            const listResult = await cognitoClient.send(
+            const listResult = await cognitoIdentityProviderClient.send(
                 new ListUsersCommand(listUsersParams)
             );
 
@@ -428,7 +428,7 @@ async function resolveToUsername(sharedWith) {
                 Username: sharedWith,
             };
 
-            const getUserResult = await cognitoClient.send(
+            const getUserResult = await cognitoIdentityProviderClient.send(
                 new AdminGetUserCommand(getUserParams)
             );
             const usernameFromAttr = getUserResult.UserAttributes?.find(
