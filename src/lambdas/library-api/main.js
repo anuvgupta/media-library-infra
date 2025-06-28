@@ -268,7 +268,6 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 }
 
 // Share library with user
-// Share library with user
 async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
     let { ownerUsername, sharedWith } = JSON.parse(body);
 
@@ -373,7 +372,7 @@ async function getIdentityIdFromUsername(username) {
             Username: username,
         };
 
-        const getUserResult = await cognitoClient.send(
+        const getUserResult = await cognitoIdentityProviderClient.send(
             new AdminGetUserCommand(getUserParams)
         );
         const userSub = getUserResult.UserAttributes.find(
@@ -418,7 +417,7 @@ async function resolveUserInfo(sharedWith) {
                 Limit: 1,
             };
 
-            const listResult = await cognitoClient.send(
+            const listResult = await cognitoIdentityProviderClient.send(
                 new ListUsersCommand(listUsersParams)
             );
 
@@ -434,7 +433,7 @@ async function resolveUserInfo(sharedWith) {
                     Username: sharedWith,
                 };
 
-                const getUserResult = await cognitoClient.send(
+                const getUserResult = await cognitoIdentityProviderClient.send(
                     new AdminGetUserCommand(getUserParams)
                 );
                 cognitoUser = {
