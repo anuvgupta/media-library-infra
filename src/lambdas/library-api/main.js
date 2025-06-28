@@ -12,6 +12,10 @@ const {
     ListUsersCommand,
     AdminGetUserCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
+const {
+    CognitoIdentityClient,
+    GetIdCommand,
+} = require("@aws-sdk/client-cognito-identity");
 
 // Env vars
 const AWS_REGION = process.env.AWS_REGION;
@@ -26,7 +30,8 @@ const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const dynamodbClient = new DynamoDBClient({});
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 const s3 = new S3Client({});
-const cognitoClient = new CognitoIdentityProviderClient({
+const cognitoIdentityClient = new CognitoIdentityClient({ region: AWS_REGION });
+const cognitoIdentityProviderClient = new CognitoIdentityProviderClient({
     region: AWS_REGION,
 });
 
@@ -359,18 +364,54 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
     }
 }
 
-// Helper function to resolve username or email to identity ID and username
+async function getIdentityIdFromUsername(username) {
+    try {
+        // We need to simulate what happens when a user logs in
+        // Get the user's sub from User Pool
+        const getUserParams = {
+            UserPoolId: USER_POOL_ID,
+            Username: username,
+        };
+
+        const getUserResult = await cognitoClient.send(
+            new AdminGetUserCommand(getUserParams)
+        );
+        const userSub = getUserResult.UserAttributes.find(
+            (attr) => attr.Name === "sub"
+        )?.Value;
+
+        if (!userSub) {
+            throw new Error("User sub not found");
+        }
+
+        // Use GetId with the user's sub to get Identity ID
+        const getIdParams = {
+            IdentityPoolId: IDENTITY_POOL_ID, // Add this env var
+            Logins: {
+                [`cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`]:
+                    userSub,
+            },
+        };
+
+        const identityResult = await cognitoIdentityClient.send(
+            new GetIdCommand(getIdParams)
+        );
+
+        return identityResult.IdentityId;
+    } catch (error) {
+        console.error("Error getting identity ID:", error);
+        return null;
+    }
+}
+
 async function resolveUserInfo(sharedWith) {
     try {
         console.log("Resolving user info for:", sharedWith);
 
-        // Determine if input is email or username
         const isEmail = sharedWith.includes("@");
-
         let cognitoUser;
 
         if (isEmail) {
-            // Search by email
             const listUsersParams = {
                 UserPoolId: USER_POOL_ID,
                 Filter: `email = "${sharedWith}"`,
@@ -382,13 +423,11 @@ async function resolveUserInfo(sharedWith) {
             );
 
             if (!listResult.Users || listResult.Users.length === 0) {
-                console.log("No user found with email:", sharedWith);
                 return null;
             }
 
             cognitoUser = listResult.Users[0];
         } else {
-            // Assume it's a username, try to get user directly
             try {
                 const getUserParams = {
                     UserPoolId: USER_POOL_ID,
@@ -404,34 +443,27 @@ async function resolveUserInfo(sharedWith) {
                 };
             } catch (error) {
                 if (error.name === "UserNotFoundException") {
-                    console.log("No user found with username:", sharedWith);
                     return null;
                 }
                 throw error;
             }
         }
 
-        // Extract identity ID and username from Cognito user
-        const identityIdAttr = cognitoUser.UserAttributes?.find(
-            (attr) => attr.Name === "custom:identity_id"
-        );
+        // Get username
         const usernameFromAttr = cognitoUser.UserAttributes?.find(
             (attr) => attr.Name === "preferred_username"
         );
-
-        // Use the Cognito username if no preferred_username is set
         const username = usernameFromAttr?.Value || cognitoUser.Username;
-        const identityId = identityIdAttr?.Value;
+
+        // Get Identity ID using the username
+        const identityId = await getIdentityIdFromUsername(
+            cognitoUser.Username
+        );
 
         if (!identityId) {
-            console.log(
-                "User found but no identity ID attribute:",
-                cognitoUser.Username
-            );
+            console.log("Could not resolve identity ID for user:", username);
             return null;
         }
-
-        console.log("Resolved user:", { username, identityId });
 
         return {
             username,
