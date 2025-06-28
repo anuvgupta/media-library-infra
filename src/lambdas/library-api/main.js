@@ -528,7 +528,8 @@ async function createOrUpdateLibraryAccess(
         const requestData = JSON.parse(body);
 
         // Validate required fields and sanitize input
-        const { movieCount, collectionCount, lastScanAt } = requestData;
+        const { movieCount, collectionCount, lastScanAt, ownerUsername } =
+            requestData;
 
         if (
             typeof movieCount !== "number" ||
@@ -556,13 +557,20 @@ async function createOrUpdateLibraryAccess(
         );
 
         // Prepare the record
-        const libraryRecord = {
-            ownerIdentityId: ownerIdentityId,
+        let libraryRecord = {
+            ownerIdentityId,
+            movieCount,
+            collectionCount,
+            lastScanAt,
             updatedAt: currentTime,
-            movieCount: movieCount,
-            collectionCount: collectionCount,
-            lastScanAt: lastScanAt,
         };
+        // Optional fields
+        if (ownerUsername) {
+            libraryRecord = {
+                ownerUsername,
+                ...libraryRecord,
+            };
+        }
 
         // If record exists, preserve the createdAt timestamp
         if (existingRecord.Item) {
