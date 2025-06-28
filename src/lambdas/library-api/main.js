@@ -534,6 +534,77 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
     }
 }
 
+// Remove shared access for a specific user
+async function removeSharedAccess(
+    ownerIdentityId,
+    shareWithIdentityId,
+    identityId
+) {
+    try {
+        console.log(
+            "Removing shared access for owner:",
+            ownerIdentityId,
+            "shared with:",
+            shareWithIdentityId,
+            "requested by:",
+            identityId
+        );
+
+        // Validate requesting user owns the library
+        if (ownerIdentityId !== identityId) {
+            return createResponse(403, {
+                error: "You can only remove shared access from your own library",
+            });
+        }
+
+        // Check if library exists
+        const library = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerIdentityId },
+            })
+        );
+
+        if (!library.Item) {
+            return createResponse(404, { error: "Library not found" });
+        }
+
+        // Check if shared access exists
+        const sharedAccess = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: shareWithIdentityId,
+                },
+            })
+        );
+
+        if (!sharedAccess.Item) {
+            return createResponse(404, { error: "Shared access not found" });
+        }
+
+        // Remove the shared access
+        await dynamodb.send(
+            new DeleteCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: shareWithIdentityId,
+                },
+            })
+        );
+
+        return createResponse(200, {
+            message: "Shared access removed successfully",
+            removedIdentityId: shareWithIdentityId,
+        });
+    } catch (error) {
+        console.error("Error removing shared access:", error);
+        return createResponse(500, { error: "Internal server error" });
+    }
+}
+
 // Check if user has access to a library
 async function checkLibraryAccess(ownerIdentityId, identityId) {
     try {
