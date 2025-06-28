@@ -43,6 +43,7 @@ jobs:
 
             - name: Deploy to AWS (Prod)
               env:
+                  STAGE: prod
                   GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
                   TMDB_API_ACCESS_TOKEN_PROD: ${{ secrets.TMDB_API_ACCESS_TOKEN_PROD }}
                   AWS_REGION: ${{ secrets.AWS_REGION }}

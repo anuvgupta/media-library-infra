@@ -43,6 +43,7 @@ jobs:
 
             - name: Deploy to AWS (Dev)
               env:
+                  STAGE: dev
                   GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
                   TMDB_API_ACCESS_TOKEN_DEV: ${{ secrets.TMDB_API_ACCESS_TOKEN_DEV }}
                   AWS_REGION: ${{ secrets.AWS_REGION }}

@@ -21,6 +21,7 @@ import { Construct } from "constructs";
 
 interface LibraryAccessRecord {
     ownerIdentityId: string;
+    ownerUsername: string;
     movieCount: number;
     collectionCount: number;
     createdAt: string;
