@@ -33,6 +33,7 @@ interface LibrarySharedRecord {
     ownerIdentityId: string;
     ownerUsername: string;
     sharedWithIdentityId: string;
+    sharedWithUsername: string;
     sharedAt: string;
 }
 
@@ -607,13 +608,13 @@ export class MediaLibraryStack extends cdk.Stack {
         librarySharedTable.grantReadWriteData(libraryApiLambda);
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantRead(libraryApiLambda);
-        // libraryApiLambda.addToRolePolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["cognito-idp:ListUsers", "cognito-idp:AdminGetUser"],
-        //         resources: [userPool.userPoolArn],
-        //     })
-        // );
+        libraryApiLambda.addToRolePolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["cognito-idp:ListUsers", "cognito-idp:AdminGetUser"],
+                resources: [userPool.userPoolArn],
+            })
+        );
 
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({

@@ -7,16 +7,16 @@ const {
     DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
-// const {
-//     CognitoIdentityProviderClient,
-//     ListUsersCommand,
-//     AdminGetUserCommand,
-// } = require("@aws-sdk/client-cognito-identity-provider");
+const {
+    CognitoIdentityProviderClient,
+    ListUsersCommand,
+    AdminGetUserCommand,
+} = require("@aws-sdk/client-cognito-identity-provider");
 
 // Env vars
 const AWS_REGION = process.env.AWS_REGION;
-// const USER_POOL_ID = process.env.USER_POOL_ID;
-// const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
+const USER_POOL_ID = process.env.USER_POOL_ID;
+const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
 const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
@@ -26,9 +26,9 @@ const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const dynamodbClient = new DynamoDBClient({});
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 const s3 = new S3Client({});
-// const cognitoClient = new CognitoIdentityProviderClient({
-//     region: AWS_REGION,
-// });
+const cognitoClient = new CognitoIdentityProviderClient({
+    region: AWS_REGION,
+});
 
 exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
@@ -263,8 +263,9 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 }
 
 // Share library with user
+// Share library with user
 async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
-    let { ownerUsername, shareWithIdentityId } = JSON.parse(body);
+    let { ownerUsername, sharedWith } = JSON.parse(body);
 
     // Validate requesting user owns the library
     if (ownerIdentityId !== requestingIdentityId) {
@@ -274,10 +275,10 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
     }
 
     try {
-        // Validate the shareWithIdentityId exists (basic validation)
-        if (!shareWithIdentityId) {
+        // Validate required fields
+        if (!sharedWith) {
             return createResponse(400, {
-                error: "shareWithIdentityId is required",
+                error: "sharedWith is required (username or email)",
             });
         }
 
@@ -294,6 +295,37 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
             return createResponse(404, { error: "Library not found" });
         }
 
+        // Resolve sharedWith to identity ID and username
+        const userInfo = await resolveUserInfo(sharedWith);
+        if (!userInfo) {
+            return createResponse(404, {
+                error: "User not found with provided username or email",
+            });
+        }
+
+        const {
+            identityId: shareWithIdentityId,
+            username: sharedWithUsername,
+        } = userInfo;
+
+        // Check if trying to share with themselves
+        if (shareWithIdentityId === ownerIdentityId) {
+            return createResponse(400, {
+                error: "Cannot share library with yourself",
+            });
+        }
+
+        // Check if already shared with this user
+        const existingShare = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerIdentityId,
+                    sharedWithIdentityId: shareWithIdentityId,
+                },
+            })
+        );
+
         // Add or update sharing record
         const shareParams = {
             TableName: LIBRARY_SHARED_TABLE,
@@ -301,19 +333,113 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
                 ownerUsername,
                 ownerIdentityId,
                 sharedWithIdentityId: shareWithIdentityId,
-                sharedAt: new Date().toISOString(),
+                sharedWithUsername: sharedWithUsername,
+                sharedAt: existingShare.Item
+                    ? existingShare.Item.sharedAt
+                    : new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
             },
         };
 
         await dynamodb.send(new PutCommand(shareParams));
 
         return createResponse(200, {
-            message: "Library shared successfully",
-            sharedWith: shareWithIdentityId,
+            message: existingShare.Item
+                ? "Library share updated successfully"
+                : "Library shared successfully",
+            sharedWith: {
+                identityId: shareWithIdentityId,
+                username: sharedWithUsername,
+                originalInput: sharedWith,
+            },
         });
     } catch (error) {
         console.error("Error sharing library:", error);
         return createResponse(500, { error: "Internal server error" });
+    }
+}
+
+// Helper function to resolve username or email to identity ID and username
+async function resolveUserInfo(sharedWith) {
+    try {
+        console.log("Resolving user info for:", sharedWith);
+
+        // Determine if input is email or username
+        const isEmail = sharedWith.includes("@");
+
+        let cognitoUser;
+
+        if (isEmail) {
+            // Search by email
+            const listUsersParams = {
+                UserPoolId: USER_POOL_ID,
+                Filter: `email = "${sharedWith}"`,
+                Limit: 1,
+            };
+
+            const listResult = await cognitoClient.send(
+                new ListUsersCommand(listUsersParams)
+            );
+
+            if (!listResult.Users || listResult.Users.length === 0) {
+                console.log("No user found with email:", sharedWith);
+                return null;
+            }
+
+            cognitoUser = listResult.Users[0];
+        } else {
+            // Assume it's a username, try to get user directly
+            try {
+                const getUserParams = {
+                    UserPoolId: USER_POOL_ID,
+                    Username: sharedWith,
+                };
+
+                const getUserResult = await cognitoClient.send(
+                    new AdminGetUserCommand(getUserParams)
+                );
+                cognitoUser = {
+                    Username: getUserResult.Username,
+                    UserAttributes: getUserResult.UserAttributes,
+                };
+            } catch (error) {
+                if (error.name === "UserNotFoundException") {
+                    console.log("No user found with username:", sharedWith);
+                    return null;
+                }
+                throw error;
+            }
+        }
+
+        // Extract identity ID and username from Cognito user
+        const identityIdAttr = cognitoUser.UserAttributes?.find(
+            (attr) => attr.Name === "custom:identity_id"
+        );
+        const usernameFromAttr = cognitoUser.UserAttributes?.find(
+            (attr) => attr.Name === "preferred_username"
+        );
+
+        // Use the Cognito username if no preferred_username is set
+        const username = usernameFromAttr?.Value || cognitoUser.Username;
+        const identityId = identityIdAttr?.Value;
+
+        if (!identityId) {
+            console.log(
+                "User found but no identity ID attribute:",
+                cognitoUser.Username
+            );
+            return null;
+        }
+
+        console.log("Resolved user:", { username, identityId });
+
+        return {
+            username,
+            identityId,
+        };
+    } catch (error) {
+        console.error("Error resolving user info:", error);
+        return null;
     }
 }
 
@@ -357,11 +483,12 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
             })
         );
 
-        // Note: With IdentityId, we can't easily fetch user details from Cognito User Pool
-        // as IdentityId doesn't directly map to User Pool users
+        // Return enriched accesses with usernames already stored
         const enrichedAccesses = sharedAccesses.Items.map((access) => ({
             sharedWithIdentityId: access.sharedWithIdentityId,
+            sharedWithUsername: access.sharedWithUsername,
             sharedAt: access.sharedAt,
+            updatedAt: access.updatedAt,
         }));
 
         const result = {
@@ -374,77 +501,6 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
         return createResponse(200, result);
     } catch (error) {
         console.error("Error listing shared accesses:", error);
-        return createResponse(500, { error: "Internal server error" });
-    }
-}
-
-// Remove shared access for a specific user
-async function removeSharedAccess(
-    ownerIdentityId,
-    shareWithIdentityId,
-    identityId
-) {
-    try {
-        console.log(
-            "Removing shared access for owner:",
-            ownerIdentityId,
-            "shared with:",
-            shareWithIdentityId,
-            "requested by:",
-            identityId
-        );
-
-        // Validate requesting user owns the library
-        if (ownerIdentityId !== identityId) {
-            return createResponse(403, {
-                error: "You can only remove shared access from your own library",
-            });
-        }
-
-        // Check if library exists
-        const library = await dynamodb.send(
-            new GetCommand({
-                TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerIdentityId },
-            })
-        );
-
-        if (!library.Item) {
-            return createResponse(404, { error: "Library not found" });
-        }
-
-        // Check if shared access exists
-        const sharedAccess = await dynamodb.send(
-            new GetCommand({
-                TableName: LIBRARY_SHARED_TABLE,
-                Key: {
-                    ownerIdentityId: ownerIdentityId,
-                    sharedWithIdentityId: shareWithIdentityId,
-                },
-            })
-        );
-
-        if (!sharedAccess.Item) {
-            return createResponse(404, { error: "Shared access not found" });
-        }
-
-        // Remove the shared access
-        await dynamodb.send(
-            new DeleteCommand({
-                TableName: LIBRARY_SHARED_TABLE,
-                Key: {
-                    ownerIdentityId: ownerIdentityId,
-                    sharedWithIdentityId: shareWithIdentityId,
-                },
-            })
-        );
-
-        return createResponse(200, {
-            message: "Shared access removed successfully",
-            removedIdentityId: shareWithIdentityId,
-        });
-    } catch (error) {
-        console.error("Error removing shared access:", error);
         return createResponse(500, { error: "Internal server error" });
     }
 }
