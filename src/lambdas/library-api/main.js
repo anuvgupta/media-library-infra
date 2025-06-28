@@ -363,104 +363,24 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
     }
 }
 
-async function getIdentityIdFromUsername(username) {
-    try {
-        // We need to simulate what happens when a user logs in
-        // Get the user's sub from User Pool
-        const getUserParams = {
-            UserPoolId: USER_POOL_ID,
-            Username: username,
-        };
-
-        const getUserResult = await cognitoIdentityProviderClient.send(
-            new AdminGetUserCommand(getUserParams)
-        );
-        const userSub = getUserResult.UserAttributes.find(
-            (attr) => attr.Name === "sub"
-        )?.Value;
-
-        if (!userSub) {
-            throw new Error("User sub not found");
-        }
-
-        // Use GetId with the user's sub to get Identity ID
-        const getIdParams = {
-            IdentityPoolId: IDENTITY_POOL_ID, // Add this env var
-            Logins: {
-                [`cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`]:
-                    userSub,
-            },
-        };
-
-        const identityResult = await cognitoIdentityClient.send(
-            new GetIdCommand(getIdParams)
-        );
-
-        return identityResult.IdentityId;
-    } catch (error) {
-        console.error("Error getting identity ID:", error);
-        return null;
-    }
-}
-
+// Updated resolveUserInfo function
 async function resolveUserInfo(sharedWith) {
     try {
         console.log("Resolving user info for:", sharedWith);
 
-        const isEmail = sharedWith.includes("@");
-        let cognitoUser;
-
-        if (isEmail) {
-            const listUsersParams = {
-                UserPoolId: USER_POOL_ID,
-                Filter: `email = "${sharedWith}"`,
-                Limit: 1,
-            };
-
-            const listResult = await cognitoIdentityProviderClient.send(
-                new ListUsersCommand(listUsersParams)
-            );
-
-            if (!listResult.Users || listResult.Users.length === 0) {
-                return null;
-            }
-
-            cognitoUser = listResult.Users[0];
-        } else {
-            try {
-                const getUserParams = {
-                    UserPoolId: USER_POOL_ID,
-                    Username: sharedWith,
-                };
-
-                const getUserResult = await cognitoIdentityProviderClient.send(
-                    new AdminGetUserCommand(getUserParams)
-                );
-                cognitoUser = {
-                    Username: getUserResult.Username,
-                    UserAttributes: getUserResult.UserAttributes,
-                };
-            } catch (error) {
-                if (error.name === "UserNotFoundException") {
-                    return null;
-                }
-                throw error;
-            }
+        // Step 1: Resolve to username using Cognito
+        const username = await resolveToUsername(sharedWith);
+        if (!username) {
+            return null;
         }
 
-        // Get username
-        const usernameFromAttr = cognitoUser.UserAttributes?.find(
-            (attr) => attr.Name === "preferred_username"
-        );
-        const username = usernameFromAttr?.Value || cognitoUser.Username;
-
-        // Get Identity ID using the username
-        const identityId = await getIdentityIdFromUsername(
-            cognitoUser.Username
-        );
-
+        // Step 2: Get identity ID from library access table using username
+        const identityId = await getIdentityIdFromUsername(username);
         if (!identityId) {
-            console.log("Could not resolve identity ID for user:", username);
+            console.log(
+                "Username found in Cognito but no library exists:",
+                username
+            );
             return null;
         }
 
@@ -471,6 +391,84 @@ async function resolveUserInfo(sharedWith) {
     } catch (error) {
         console.error("Error resolving user info:", error);
         return null;
+    }
+}
+
+// Helper function to resolve email or username to username
+async function resolveToUsername(sharedWith) {
+    const isEmail = sharedWith.includes("@");
+
+    try {
+        if (isEmail) {
+            // Search by email
+            const listUsersParams = {
+                UserPoolId: USER_POOL_ID,
+                Filter: `email = "${sharedWith}"`,
+                Limit: 1,
+            };
+
+            const listResult = await cognitoClient.send(
+                new ListUsersCommand(listUsersParams)
+            );
+
+            if (!listResult.Users || listResult.Users.length === 0) {
+                console.log("No user found with email:", sharedWith);
+                return null;
+            }
+
+            const cognitoUser = listResult.Users[0];
+            const usernameFromAttr = cognitoUser.UserAttributes?.find(
+                (attr) => attr.Name === "preferred_username"
+            );
+            return usernameFromAttr?.Value || cognitoUser.Username;
+        } else {
+            // Assume it's a username, verify it exists in Cognito
+            const getUserParams = {
+                UserPoolId: USER_POOL_ID,
+                Username: sharedWith,
+            };
+
+            const getUserResult = await cognitoClient.send(
+                new AdminGetUserCommand(getUserParams)
+            );
+            const usernameFromAttr = getUserResult.UserAttributes?.find(
+                (attr) => attr.Name === "preferred_username"
+            );
+            return usernameFromAttr?.Value || getUserResult.Username;
+        }
+    } catch (error) {
+        if (error.name === "UserNotFoundException") {
+            console.log("No user found with username:", sharedWith);
+            return null;
+        }
+        throw error;
+    }
+}
+
+// Helper function to get identity ID from username using library access table
+async function getIdentityIdFromUsername(username) {
+    try {
+        const queryParams = {
+            TableName: LIBRARY_ACCESS_TABLE,
+            IndexName: "OwnerUsernameIndex",
+            KeyConditionExpression: "ownerUsername = :username",
+            ExpressionAttributeValues: {
+                ":username": username,
+            },
+            Limit: 1,
+        };
+
+        const result = await dynamodb.send(new QueryCommand(queryParams));
+
+        if (!result.Items || result.Items.length === 0) {
+            console.log("No library found for username:", username);
+            return null;
+        }
+
+        return result.Items[0].ownerIdentityId;
+    } catch (error) {
+        console.error("Error querying library access table:", error);
+        throw error;
     }
 }
 

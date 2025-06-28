@@ -89,6 +89,15 @@ export class MediaLibraryStack extends cdk.Stack {
                         : cdk.RemovalPolicy.RETAIN,
             }
         );
+        // Add GSI for username lookup
+        libraryAccessTable.addGlobalSecondaryIndex({
+            indexName: "OwnerUsernameIndex",
+            partitionKey: {
+                name: "ownerUsername",
+                type: dynamodb.AttributeType.STRING,
+            },
+            projectionType: dynamodb.ProjectionType.ALL,
+        });
         // Table for library sharing relationships - cleaner structure
         const librarySharedTable = new dynamodb.Table(
             this,
