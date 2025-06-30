@@ -254,16 +254,18 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             });
         }
 
-        // // Get the playlist file from S3
-        // const s3Params = {
-        //     Bucket: PLAYLIST_BUCKET,
-        //     Key: `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`,
-        // };
+        const playlistFileKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
 
-        // console.log("S3 params:", s3Params);
+        // Get the playlist file from S3
+        const s3Params = {
+            Bucket: PLAYLIST_BUCKET,
+            Key: playlistFileKey,
+        };
 
-        // const s3Result = await s3.send(new GetObjectCommand(s3Params));
-        // let playlistContent = await s3Result.Body.transformToString();
+        console.log("S3 params:", s3Params);
+
+        const s3Result = await s3.send(new GetObjectCommand(s3Params));
+        let playlistContent = await s3Result.Body.transformToString();
 
         // // Parse the playlist and replace segment URLs with pre-signed URLs
         // const updatedPlaylist = await generatePresignedPlaylist(
@@ -272,17 +274,10 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         //     movieId
         // );
 
-        // return createResponse(
-        //     200,
-        //     updatedPlaylist,
-        //     "application/vnd.apple.mpegurl"
-        // );
-
         // Generate pre-signed URL for the playlist file
-        const playlistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
         const command = new GetObjectCommand({
             Bucket: PLAYLIST_BUCKET,
-            Key: playlistKey,
+            Key: playlistFileKey,
         });
 
         const presignedUrl = await getSignedUrl(s3, command, {
