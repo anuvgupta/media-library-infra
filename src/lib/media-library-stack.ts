@@ -779,8 +779,6 @@ export class MediaLibraryStack extends cdk.Stack {
         const librariesResource = api.root.addResource("libraries");
         librariesResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
         });
         // GET /libraries/{ownerIdentityId}/library - Get specific library metadata
         const ownerLibraryResource =
@@ -788,8 +786,6 @@ export class MediaLibraryStack extends cdk.Stack {
         const libraryJsonResource = ownerLibraryResource.addResource("library");
         libraryJsonResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -800,8 +796,14 @@ export class MediaLibraryStack extends cdk.Stack {
         const playlistResource = movieResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.movieId": true,
+            },
+        });
+        const requestResource = movieResource.addResource("request");
+        requestResource.addMethod("POST", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.movieId": true,
@@ -811,8 +813,6 @@ export class MediaLibraryStack extends cdk.Stack {
         const shareResource = ownerLibraryResource.addResource("share");
         shareResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -820,8 +820,6 @@ export class MediaLibraryStack extends cdk.Stack {
         // GET /libraries/{ownerIdentityId}/share - List shared access for a library
         shareResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -832,8 +830,6 @@ export class MediaLibraryStack extends cdk.Stack {
         );
         shareUserResource.addMethod("DELETE", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.shareWithIdentityId": true,
@@ -843,8 +839,6 @@ export class MediaLibraryStack extends cdk.Stack {
         const accessResource = ownerLibraryResource.addResource("access");
         accessResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -852,8 +846,6 @@ export class MediaLibraryStack extends cdk.Stack {
         // GET /libraries/{ownerIdentityId}/access - Get library access record
         accessResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
             },
@@ -861,15 +853,11 @@ export class MediaLibraryStack extends cdk.Stack {
         // GET /metadata - Create or update library access record
         const metadataResource = api.root.addResource("metadata");
         metadataResource.addMethod("GET", tmdbSearchMovieApiIntegration, {
-            // authorizationType: apigateway.AuthorizationType.IAM,
-            // authorizer: cognitoAuthorizer,
-            // authorizationType: apigateway.AuthorizationType.COGNITO,
             authorizationType: apigateway.AuthorizationType.NONE,
             requestParameters: {
                 // Declare expected query parameters
                 "method.request.querystring.query": false,
                 "method.request.querystring.year": false,
-                // "method.request.querystring.page": false,
             },
         });
 
@@ -1159,6 +1147,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/library"),
                     getApiResource("GET", "libraries/*/movies/*/playlist"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/playlist"),
+                    getApiResource("POST", "libraries/*/movies/*/request"),
+                    getApiResource("OPTIONS", "libraries/*/movies/*/request"),
                     getApiResource("POST", "libraries/*/share"),
                     getApiResource("OPTIONS", "libraries/*/share"),
                     getApiResource("GET", "libraries/*/share"),

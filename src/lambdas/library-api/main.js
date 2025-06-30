@@ -87,6 +87,15 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
+            case "/libraries/{ownerIdentityId}/movies/{movieId}/request":
+                if (httpMethod === "POST") {
+                    return await requestMovie(
+                        event.body,
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId
+                    );
+                }
             case "/libraries/{ownerIdentityId}/share":
                 if (httpMethod === "POST") {
                     return await shareLibrary(
@@ -805,6 +814,10 @@ async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
             details: error.message,
         });
     }
+}
+
+async function requestMovie() {
+    console.log("request movie called");
 }
 
 function createResponse(statusCode, body, contentType = "application/json") {
