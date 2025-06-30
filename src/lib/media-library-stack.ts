@@ -48,6 +48,7 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     enableFirewall: boolean;
     tmdbEndpoint: string;
     tmdbAccessToken: string;
+    playlistPreSignedUrlExpiration: number;
     throttlingConfig: any;
     devWebsiteUsername?: string;
     devWebsitePassword?: string;
@@ -561,6 +562,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     ALLOWED_ORIGIN: allowedOrigin,
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
+                    PLAYLIST_PRE_SIGNED_URL_EXPIRATION:
+                        props.playlistPreSignedUrlExpiration,
                 },
                 timeout: cdk.Duration.seconds(30),
             }

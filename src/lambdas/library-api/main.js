@@ -25,6 +25,8 @@ const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
+const PLAYLIST_PRE_SIGNED_URL_EXPIRATION =
+    process.env.PLAYLIST_PRE_SIGNED_URL_EXPIRATION;
 
 // Initialize clients
 const dynamodbClient = new DynamoDBClient({});
@@ -251,22 +253,42 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             });
         }
 
-        // Get the playlist file from S3
-        const s3Params = {
+        // // Get the playlist file from S3
+        // const s3Params = {
+        //     Bucket: PLAYLIST_BUCKET,
+        //     Key: `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`,
+        // };
+
+        // console.log("S3 params:", s3Params);
+
+        // const s3Result = await s3.send(new GetObjectCommand(s3Params));
+        // let playlistContent = await s3Result.Body.transformToString();
+
+        // // Parse the playlist and replace segment URLs with pre-signed URLs
+        // const updatedPlaylist = await generatePresignedPlaylist(
+        //     playlistContent,
+        //     ownerIdentityId,
+        //     movieId
+        // );
+
+        // return createResponse(
+        //     200,
+        //     updatedPlaylist,
+        //     "application/vnd.apple.mpegurl"
+        // );
+
+        // Generate pre-signed URL for the playlist file
+        const playlistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
+        const command = new GetObjectCommand({
             Bucket: PLAYLIST_BUCKET,
-            Key: `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`,
-        };
+            Key: playlistKey,
+        });
 
-        console.log("S3 params:", s3Params);
+        const presignedUrl = await getSignedUrl(s3, command, {
+            expiresIn: PLAYLIST_PRE_SIGNED_URL_EXPIRATION,
+        });
 
-        const s3Result = await s3.send(new GetObjectCommand(s3Params));
-        const playlistContent = await s3Result.Body.transformToString();
-
-        return createResponse(
-            200,
-            playlistContent,
-            "application/vnd.apple.mpegurl"
-        );
+        return createResponse(200, { playlistUrl: presignedUrl });
     } catch (error) {
         if (error.name === "NoSuchKey") {
             return createResponse(404, { error: "Playlist not found" });
