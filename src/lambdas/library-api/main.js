@@ -737,22 +737,17 @@ async function createOrUpdateLibraryAccess(
             };
         }
 
-        // If record exists, preserve the createdAt timestamp
+        // If record exists, preserve the createdAt timestamp and ownerUsername if not being updated
         if (existingRecord.Item) {
             libraryRecord.createdAt = existingRecord.Item.createdAt;
+            if (!libraryRecord.ownerUsername) {
+                libraryRecord.ownerUsername = existingRecord.Item.ownerUsername;
+            }
             console.log("Updating existing LibraryAccess record");
         } else {
             libraryRecord.createdAt = currentTime;
             console.log("Creating new LibraryAccess record");
         }
-
-        // Put the record (this will create or update)
-        await dynamodb.send(
-            new PutCommand({
-                TableName: LIBRARY_ACCESS_TABLE,
-                Item: libraryRecord,
-            })
-        );
 
         console.log(
             `LibraryAccess record ${
