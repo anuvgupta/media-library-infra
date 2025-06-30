@@ -1084,7 +1084,7 @@ export class MediaLibraryStack extends cdk.Stack {
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: ["s3:PutObject", "s3:ListObjectsV2"],
+                actions: ["s3:PutObject"],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
                     `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
@@ -1099,6 +1099,20 @@ export class MediaLibraryStack extends cdk.Stack {
                     // Users can access their own media files using Cognito identity ID
                     `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
+            })
+        );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:ListBucket"],
+                resources: [mediaBucket.bucketArn],
+                conditions: {
+                    StringLike: {
+                        "s3:prefix": [
+                            "media/${cognito-identity.amazonaws.com:sub}/*",
+                        ],
+                    },
+                },
             })
         );
         // Grant authenticated users permission to receive only their own messages
