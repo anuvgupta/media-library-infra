@@ -9,7 +9,7 @@
     "awsMediaBucketPrefix": "media-library-media",
     "awsPlaylistBucketPrefix": "media-library-playlist",
     "frontendRepo": "anuvgupta/media-library-frontend",
-    "playlistPreSignedUrlExpiration": 3600,
+    "moviePreSignedUrlExpiration": 7200,
     "enableFirewall": false,
     "throttlingConfig": {},
     "tags": {

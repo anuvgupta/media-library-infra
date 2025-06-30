@@ -26,8 +26,8 @@ const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
-const PLAYLIST_PRE_SIGNED_URL_EXPIRATION =
-    process.env.PLAYLIST_PRE_SIGNED_URL_EXPIRATION;
+const MOVIE_PRE_SIGNED_URL_EXPIRATION =
+    process.env.MOVIE_PRE_SIGNED_URL_EXPIRATION;
 
 // Initialize clients
 const dynamodbClient = new DynamoDBClient({});
@@ -286,9 +286,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         });
 
         const presignedUrl = await getSignedUrl(s3, command, {
-            expiresIn: Math.floor(
-                Number(`${PLAYLIST_PRE_SIGNED_URL_EXPIRATION}`)
-            ),
+            expiresIn: Math.floor(Number(`${MOVIE_PRE_SIGNED_URL_EXPIRATION}`)),
         });
 
         return createResponse(200, { playlistUrl: presignedUrl });

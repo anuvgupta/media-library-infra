@@ -42,7 +42,7 @@ new MediaLibraryStack(app, `MediaLibrary-${stage}`, {
         stage === "prod"
             ? process.env.TMDB_API_ACCESS_TOKEN_PROD!
             : process.env.TMDB_API_ACCESS_TOKEN_DEV!,
-    playlistPreSignedUrlExpiration: config.playlistPreSignedUrlExpiration,
+    moviePreSignedUrlExpiration: config.moviePreSignedUrlExpiration,
     devWebsiteUsername: process.env.DEV_WEBSITE_USERNAME!,
     devWebsitePassword: process.env.DEV_WEBSITE_PASSWORD!,
     stageName: stage,
