@@ -8,6 +8,7 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const { Upload } = require("@aws-sdk/lib-storage");
 const {
     CognitoIdentityProviderClient,
     ListUsersCommand,
@@ -26,6 +27,7 @@ const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
+const MEDIA_BUCKET = process.env.MEDIA_BUCKET_NAME;
 const MOVIE_PRE_SIGNED_URL_EXPIRATION =
     process.env.MOVIE_PRE_SIGNED_URL_EXPIRATION;
 
@@ -90,6 +92,15 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
+            case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist/process":
+                if (httpMethod === "POST") {
+                    return await processPlaylistTemplate(
+                        event.body,
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId
+                    );
+                }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/request":
                 if (httpMethod === "POST") {
                     return await requestMovie(
@@ -112,7 +123,6 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
-                break;
             case "/libraries/{ownerIdentityId}/share/{shareWithIdentityId}":
                 if (httpMethod === "DELETE") {
                     return await removeSharedAccess(
@@ -121,7 +131,6 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
-                break;
             case "/libraries/{ownerIdentityId}/access":
                 if (httpMethod === "POST") {
                     return await createOrUpdateLibraryAccess(
@@ -135,7 +144,6 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
-                break;
             default:
                 return createResponse(404, {
                     error: "Endpoint/method not found",
@@ -822,6 +830,315 @@ async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
         return createResponse(200, result.Item);
     } catch (error) {
         console.error("Error getting library access:", error);
+        return createResponse(500, {
+            error: "Internal server error",
+            details: error.message,
+        });
+    }
+}
+
+async function processPlaylistTemplate(
+    body,
+    ownerIdentityId,
+    movieId,
+    requestingIdentityId
+) {
+    try {
+        console.log("Processing playlist template for movie:", movieId);
+
+        // Validate requesting user owns the content
+        if (ownerIdentityId !== requestingIdentityId) {
+            return createResponse(403, {
+                error: "You can only process playlists for your own content",
+            });
+        }
+
+        const requestData = JSON.parse(body);
+        const { segmentCount, totalSegments, isComplete } = requestData;
+
+        const startTime = Date.now();
+
+        // Get the template playlist
+        const templateKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist-template.m3u8`;
+
+        let templatePlaylist;
+        try {
+            const templateResult = await s3.send(
+                new GetObjectCommand({
+                    Bucket: PLAYLIST_BUCKET,
+                    Key: templateKey,
+                })
+            );
+            templatePlaylist = await templateResult.Body.transformToString();
+        } catch (error) {
+            if (error.name === "NoSuchKey") {
+                return createResponse(404, {
+                    error: "Template playlist not found",
+                });
+            }
+            throw error;
+        }
+
+        // Try to get existing processed playlist to reuse valid URLs
+        const finalPlaylistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
+        let existingPlaylist = null;
+        let existingSegmentUrls = new Map(); // filename -> {url, lineIndex}
+
+        try {
+            const existingResult = await s3.send(
+                new GetObjectCommand({
+                    Bucket: PLAYLIST_BUCKET,
+                    Key: finalPlaylistKey,
+                })
+            );
+            existingPlaylist = await existingResult.Body.transformToString();
+
+            // Parse existing playlist to extract segment URLs that might still be valid
+            const existingLines = existingPlaylist.split("\n");
+            let lineIndex = 0;
+
+            for (const line of existingLines) {
+                if (line.startsWith("https://") && line.includes(".ts")) {
+                    // Extract the filename from the pre-signed URL
+                    const urlParts = line.split("/");
+                    const segmentPart = urlParts.find(
+                        (part) =>
+                            part.includes("segment_") && part.includes(".ts")
+                    );
+
+                    if (segmentPart) {
+                        // Extract just the filename (before query parameters)
+                        const filename = segmentPart.split("?")[0];
+
+                        // Check if URL is still valid (has at least 30 minutes left)
+                        const url = new URL(line);
+                        const expiresParam =
+                            url.searchParams.get("X-Amz-Expires");
+                        const dateParam = url.searchParams.get("X-Amz-Date");
+
+                        if (expiresParam && dateParam) {
+                            const signedTime = new Date(
+                                dateParam.slice(0, 4) +
+                                    "-" +
+                                    dateParam.slice(4, 6) +
+                                    "-" +
+                                    dateParam.slice(6, 8) +
+                                    "T" +
+                                    dateParam.slice(9, 11) +
+                                    ":" +
+                                    dateParam.slice(11, 13) +
+                                    ":" +
+                                    dateParam.slice(13, 15) +
+                                    "Z"
+                            );
+                            const expiresTime = new Date(
+                                signedTime.getTime() +
+                                    parseInt(expiresParam) * 1000
+                            );
+                            const timeLeft = expiresTime.getTime() - Date.now();
+                            const thirtyMinutes = 30 * 60 * 1000;
+
+                            if (timeLeft > thirtyMinutes) {
+                                existingSegmentUrls.set(filename, {
+                                    url: line,
+                                    lineIndex: lineIndex,
+                                });
+                                console.log(
+                                    `📋 Reusing valid URL for ${filename} (${Math.round(
+                                        timeLeft / 60000
+                                    )}min left)`
+                                );
+                            }
+                        }
+                    }
+                }
+                lineIndex++;
+            }
+
+            console.log(
+                `📋 Found ${existingSegmentUrls.size} existing valid URLs to reuse`
+            );
+        } catch (error) {
+            if (error.name !== "NoSuchKey") {
+                console.warn(
+                    "Failed to load existing playlist for URL reuse:",
+                    error.message
+                );
+            }
+            // Continue without reusing URLs
+        }
+
+        // Parse template and identify segment lines that need processing
+        const lines = templatePlaylist.split("\n");
+        const segmentLines = [];
+        const segmentFilenames = [];
+        const segmentsNeedingUrls = [];
+
+        // First pass: collect all segment filenames and determine which need new URLs
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.endsWith(".ts")) {
+                if (segmentLines.length < segmentCount) {
+                    segmentLines.push(i);
+                    segmentFilenames.push(line);
+
+                    // Check if we can reuse existing URL
+                    if (!existingSegmentUrls.has(line)) {
+                        segmentsNeedingUrls.push({
+                            filename: line,
+                            index: segmentLines.length - 1,
+                        });
+                    }
+                } else {
+                    break; // Don't process segments that haven't been uploaded yet
+                }
+            }
+        }
+
+        console.log(
+            `🔄 Need to generate ${segmentsNeedingUrls.length} new pre-signed URLs (${existingSegmentUrls.size} reused)`
+        );
+
+        // Generate pre-signed URLs only for segments that need them
+        const BATCH_SIZE = 50; // Process 50 URLs at a time
+        const newPresignedUrls = new Map(); // filename -> url
+
+        if (segmentsNeedingUrls.length > 0) {
+            const urlStartTime = Date.now();
+
+            // Process in batches for better performance and to avoid timeouts
+            for (let i = 0; i < segmentsNeedingUrls.length; i += BATCH_SIZE) {
+                const batch = segmentsNeedingUrls.slice(i, i + BATCH_SIZE);
+                console.log(
+                    `🔄 Processing URL batch ${
+                        Math.floor(i / BATCH_SIZE) + 1
+                    }/${Math.ceil(segmentsNeedingUrls.length / BATCH_SIZE)} (${
+                        batch.length
+                    } URLs)`
+                );
+
+                const batchPromises = batch.map(async ({ filename }) => {
+                    const segmentKey = `media/${ownerIdentityId}/movie/${movieId}/segments/${filename}`;
+
+                    const command = new GetObjectCommand({
+                        Bucket: MEDIA_BUCKET,
+                        Key: segmentKey,
+                    });
+
+                    const url = await getSignedUrl(s3, command, {
+                        expiresIn: Math.floor(
+                            Number(MOVIE_PRE_SIGNED_URL_EXPIRATION)
+                        ),
+                    });
+
+                    return { filename, url };
+                });
+
+                const batchResults = await Promise.all(batchPromises);
+
+                // Add batch results to the map
+                for (const { filename, url } of batchResults) {
+                    newPresignedUrls.set(filename, url);
+                }
+            }
+
+            const urlGenerationTime = Date.now() - urlStartTime;
+            console.log(
+                `✅ Generated ${newPresignedUrls.size} new pre-signed URLs in ${urlGenerationTime}ms`
+            );
+        }
+
+        // Build the final playlist using both existing and new URLs
+        let processedPlaylist = "";
+        let urlIndex = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+
+            if (segmentLines.includes(i)) {
+                const filename = segmentFilenames[urlIndex];
+
+                // Use existing URL if available, otherwise use newly generated URL
+                let segmentUrl;
+                if (existingSegmentUrls.has(filename)) {
+                    segmentUrl = existingSegmentUrls.get(filename).url;
+                } else {
+                    segmentUrl = newPresignedUrls.get(filename);
+                }
+
+                if (segmentUrl) {
+                    processedPlaylist += segmentUrl + "\n";
+                } else {
+                    console.error(
+                        `❌ No URL available for segment: ${filename}`
+                    );
+                    processedPlaylist += `# ERROR: Missing URL for ${filename}\n`;
+                }
+
+                urlIndex++;
+            } else if (line.endsWith(".ts")) {
+                // This is a segment line beyond our segmentCount - stop processing
+                break;
+            } else {
+                // This is a metadata line - keep as-is
+                processedPlaylist += line + "\n";
+            }
+        }
+
+        // Add end tag if upload is complete
+        if (isComplete && !processedPlaylist.includes("#EXT-X-ENDLIST")) {
+            processedPlaylist += "#EXT-X-ENDLIST\n";
+        }
+
+        // Save the processed playlist
+        const uploadParams = {
+            Bucket: PLAYLIST_BUCKET,
+            Key: finalPlaylistKey,
+            Body: processedPlaylist,
+            ContentType: "application/vnd.apple.mpegurl",
+            Metadata: {
+                movieId: movieId,
+                segmentCount: segmentCount.toString(),
+                totalSegments: totalSegments.toString(),
+                isComplete: isComplete.toString(),
+                lastUpdated: new Date().toISOString(),
+                urlsReused: existingSegmentUrls.size.toString(),
+                urlsGenerated: newPresignedUrls.size.toString(),
+            },
+        };
+
+        const upload = new Upload({
+            client: s3,
+            params: uploadParams,
+        });
+
+        await upload.done();
+
+        const totalTime = Date.now() - startTime;
+        console.log(
+            `✅ Playlist processed in ${totalTime}ms (${segmentCount}/${totalSegments} segments, ${existingSegmentUrls.size} URLs reused, ${newPresignedUrls.size} URLs generated)`
+        );
+
+        return createResponse(200, {
+            message: "Playlist processed successfully",
+            segmentCount,
+            totalSegments,
+            isComplete,
+            processingTimeMs: totalTime,
+            urlsReused: existingSegmentUrls.size,
+            urlsGenerated: newPresignedUrls.size,
+            efficiency:
+                existingSegmentUrls.size > 0
+                    ? `${Math.round(
+                          (existingSegmentUrls.size /
+                              (existingSegmentUrls.size +
+                                  newPresignedUrls.size)) *
+                              100
+                      )}% URLs reused`
+                    : "No URLs reused (first processing)",
+        });
+    } catch (error) {
+        console.error("Error processing playlist template:", error);
         return createResponse(500, {
             error: "Internal server error",
             details: error.message,

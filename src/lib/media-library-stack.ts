@@ -570,6 +570,8 @@ export class MediaLibraryStack extends cdk.Stack {
             {
                 runtime: lambda.Runtime.NODEJS_18_X,
                 handler: "main.handler",
+                timeout: cdk.Duration.seconds(60), // Increase timeout for large playlists
+                memorySize: 1024, // More memory = better CPU for parallel processing
                 code: lambda.Code.fromAsset(
                     path.join(__dirname, "../lambdas/library-api")
                 ),
@@ -583,8 +585,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
                     MOVIE_PRE_SIGNED_URL_EXPIRATION: `${props.moviePreSignedUrlExpiration}`,
+                    NODE_OPTIONS: "--max-old-space-size=512",
                 },
-                timeout: cdk.Duration.seconds(30),
             }
         );
 
@@ -638,7 +640,8 @@ export class MediaLibraryStack extends cdk.Stack {
         libraryAccessTable.grantReadWriteData(libraryApiLambda);
         librarySharedTable.grantReadWriteData(libraryApiLambda);
         libraryBucket.grantRead(libraryApiLambda);
-        playlistBucket.grantRead(libraryApiLambda);
+        playlistBucket.grantReadWrite(libraryApiLambda);
+        mediaBucket.grantRead(libraryApiLambda);
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
@@ -817,6 +820,14 @@ export class MediaLibraryStack extends cdk.Stack {
         const movieResource = moviesResource.addResource("{movieId}");
         const playlistResource = movieResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.movieId": true,
+            },
+        });
+        const processPlaylistResource = playlistResource.addResource("process");
+        processPlaylistResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
@@ -1112,6 +1123,14 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/library"),
                     getApiResource("GET", "libraries/*/movies/*/playlist"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/playlist"),
+                    getApiResource(
+                        "POST",
+                        "libraries/*/movies/*/playlist/process"
+                    ),
+                    getApiResource(
+                        "OPTIONS",
+                        "libraries/*/movies/*/playlist/process"
+                    ),
                     getApiResource("POST", "libraries/*/movies/*/request"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/request"),
                     getApiResource("POST", "libraries/*/share"),
