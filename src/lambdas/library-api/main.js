@@ -285,7 +285,9 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         });
 
         const presignedUrl = await getSignedUrl(s3, command, {
-            expiresIn: PLAYLIST_PRE_SIGNED_URL_EXPIRATION,
+            expiresIn: Math.floor(
+                Number(`${PLAYLIST_PRE_SIGNED_URL_EXPIRATION}`)
+            ),
         });
 
         return createResponse(200, { playlistUrl: presignedUrl });
