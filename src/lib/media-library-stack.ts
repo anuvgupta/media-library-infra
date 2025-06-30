@@ -188,6 +188,14 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             ],
         });
+        // Download restriction - CORS origin
+        libraryBucket.addCorsRule({
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+            allowedOrigins: [allowedOrigin],
+            allowedHeaders: ["*"],
+            exposedHeaders: ["ETag"],
+            maxAge: 3000,
+        });
 
         /* S3 BUCKETS - MEDIA BUCKET */
         // Input bucket for media cache
@@ -219,6 +227,18 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             ],
         });
+        // Download restriction - CORS origin
+        mediaBucket.addCorsRule({
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+            allowedOrigins: [allowedOrigin],
+            allowedHeaders: ["*"],
+            exposedHeaders: [
+                "ETag",
+                "Content-Range", // Important for range requests
+                "Accept-Ranges", // Important for range requests
+            ],
+            maxAge: 3000,
+        });
 
         /* S3 BUCKETS - PLAYLIST BUCKET */
         const playlistBucket = new s3.Bucket(
@@ -226,13 +246,8 @@ export class MediaLibraryStack extends cdk.Stack {
             "MediaLibraryPlaylistBucket",
             {
                 bucketName: `${props.awsPlaylistBucketPrefix}-${this.account}-${props.stageName}`, // Make unique per account
-                publicReadAccess: true,
-                blockPublicAccess: new s3.BlockPublicAccess({
-                    blockPublicAcls: false,
-                    blockPublicPolicy: false,
-                    ignorePublicAcls: false,
-                    restrictPublicBuckets: false,
-                }),
+                publicReadAccess: false,
+                blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
                 objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
                 removalPolicy: cdk.RemovalPolicy.DESTROY,
                 transferAcceleration: true,
@@ -264,7 +279,11 @@ export class MediaLibraryStack extends cdk.Stack {
             allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
             allowedOrigins: [allowedOrigin],
             allowedHeaders: ["*"],
-            exposedHeaders: ["ETag"],
+            exposedHeaders: [
+                "ETag",
+                "Content-Range", // Important for range requests
+                "Accept-Ranges", // Important for range requests
+            ],
             maxAge: 3000,
         });
 
@@ -559,6 +578,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     LIBRARY_SHARED_TABLE_NAME: librarySharedTable.tableName,
                     LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
+                    MEDIA_BUCKET_NAME: mediaBucket.bucketName,
                     ALLOWED_ORIGIN: allowedOrigin,
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
@@ -1038,95 +1058,38 @@ export class MediaLibraryStack extends cdk.Stack {
         // }
 
         /* IAM - AUTHENTICATED USERS */
-        // Grant authenticated users read/write access to library bucket for their own content
+        // TODO: tighten S3 & SQS upload permissions on authenticated users
+        // Grant authenticated users write access to media/playlist/library buckets for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: [
-                    "s3:PutObject",
-                    // "s3:PutObjectAcl",
-                    // "s3:DeleteObject",
-                    // "s3:GetObject",
-                ],
+                actions: ["s3:PutObject"],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
                     `${libraryBucket.bucketArn}/library/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
-        // Grant authenticated users read/write access to media/playlist buckets for their own content
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: [
-                    "s3:PutObject",
-                    // "s3:PutObjectAcl",
-                    // "s3:DeleteObject",
-                    "s3:GetObject",
-                ],
+                actions: ["s3:PutObject"],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
                     `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
-        // authRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["s3:ListBucket"],
-        //         resources: [mediaBucket.bucketArn],
-        //         conditions: {
-        //             StringLike: {
-        //                 "s3:prefix": [
-        //                     "media/${cognito-identity.amazonaws.com:sub}/*",
-        //                 ],
-        //             },
-        //         },
-        //     })
-        // );
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: [
-                    "s3:PutObject",
-                    // "s3:PutObjectAcl",
-                    // "s3:DeleteObject",
-                    "s3:GetObject",
-                ],
+                actions: ["s3:PutObject"],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
                     `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
-        // authRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["s3:ListBucket"],
-        //         resources: [playlistBucket.bucketArn],
-        //         conditions: {
-        //             StringLike: {
-        //                 "s3:prefix": [
-        //                     "media/${cognito-identity.amazonaws.com:sub}/*",
-        //                 ],
-        //             },
-        //         },
-        //     })
-        // );
-        // // Grant authenticated users permission to send messages to SQS with their user ID
-        // authRole.addToPolicy(
-        //     new iam.PolicyStatement({
-        //         effect: iam.Effect.ALLOW,
-        //         actions: ["sqs:SendMessage", "sqs:GetQueueAttributes"],
-        //         resources: [workerCommandQueue.queueArn],
-        //         conditions: {
-        //             StringEquals: {
-        //                 "sqs:MessageAttribute/userId":
-        //                     "${cognito-identity.amazonaws.com:sub}",
-        //             },
-        //         },
-        //     })
-        // );
         // Grant authenticated users permission to receive only their own messages
         authRole.addToPolicy(
             new iam.PolicyStatement({
