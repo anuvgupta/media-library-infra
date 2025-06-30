@@ -254,7 +254,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         // Get the playlist file from S3
         const s3Params = {
             Bucket: PLAYLIST_BUCKET,
-            Key: `media/${ownerIdentityId}/movies/${movieId}/playlist.m3u8`,
+            Key: `playlist/${ownerIdentityId}/movies/${movieId}/playlist.m3u8`,
         };
 
         console.log("S3 params:", s3Params);
