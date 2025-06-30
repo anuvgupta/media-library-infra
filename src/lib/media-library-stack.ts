@@ -584,6 +584,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     ALLOWED_ORIGIN: allowedOrigin,
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
+                    SQS_QUEUE_URL: workerCommandQueue.queueUrl,
                     MOVIE_PRE_SIGNED_URL_EXPIRATION: `${props.moviePreSignedUrlExpiration}`,
                     NODE_OPTIONS: "--max-old-space-size=512",
                 },
@@ -642,6 +643,7 @@ export class MediaLibraryStack extends cdk.Stack {
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantReadWrite(libraryApiLambda);
         mediaBucket.grantRead(libraryApiLambda);
+        workerCommandQueue.grantSendMessages(libraryApiLambda);
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
@@ -649,7 +651,6 @@ export class MediaLibraryStack extends cdk.Stack {
                 resources: [userPool.userPoolArn],
             })
         );
-
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,

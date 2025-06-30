@@ -18,6 +18,7 @@ const {
     CognitoIdentityClient,
     GetIdCommand,
 } = require("@aws-sdk/client-cognito-identity");
+const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
 
 // Env vars
 const AWS_REGION = process.env.AWS_REGION;
@@ -28,6 +29,7 @@ const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET_NAME;
+const SQS_QUEUE_URL = process.env.SQS_QUEUE_URL;
 const MOVIE_PRE_SIGNED_URL_EXPIRATION =
     process.env.MOVIE_PRE_SIGNED_URL_EXPIRATION;
 
@@ -35,6 +37,7 @@ const MOVIE_PRE_SIGNED_URL_EXPIRATION =
 const dynamodbClient = new DynamoDBClient({});
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 const s3 = new S3Client({});
+const sqs = new SQSClient({});
 const cognitoIdentityClient = new CognitoIdentityClient({ region: AWS_REGION });
 const cognitoIdentityProviderClient = new CognitoIdentityProviderClient({
     region: AWS_REGION,
@@ -1146,8 +1149,61 @@ async function processPlaylistTemplate(
     }
 }
 
-async function requestMovie() {
-    console.log("request movie called");
+async function requestMovie(
+    body,
+    ownerIdentityId,
+    movieId,
+    requestingIdentityId
+) {
+    try {
+        console.log(
+            "Processing movie request for owner:",
+            ownerIdentityId,
+            "movie:",
+            movieId,
+            "requested by:",
+            requestingIdentityId
+        );
+
+        // Check if user has access to this library
+        const hasAccess = await checkLibraryAccess(
+            ownerIdentityId,
+            requestingIdentityId
+        );
+        if (!hasAccess) {
+            return createResponse(403, {
+                error: "Access denied to this library",
+            });
+        }
+
+        // Send SQS message
+        const message = {
+            command: "upload-movie",
+            identityId: ownerIdentityId,
+            movieId: movieId,
+        };
+
+        const sqsParams = {
+            QueueUrl: SQS_QUEUE_URL,
+            MessageBody: JSON.stringify(message),
+        };
+
+        await sqs.send(new SendMessageCommand(sqsParams));
+
+        console.log("Movie upload request sent to SQS queue");
+
+        return createResponse(200, {
+            message: "Movie upload request submitted successfully",
+            movieId: movieId,
+            ownerIdentityId: ownerIdentityId,
+        });
+    } catch (error) {
+        console.error("Error requesting movie:", error);
+        return createResponse(500, {
+            error: "Internal server error",
+            details: error.message,
+        });
+    }
 }
 
 function createResponse(statusCode, body, contentType = "application/json") {
