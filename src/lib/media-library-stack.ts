@@ -1084,7 +1084,7 @@ export class MediaLibraryStack extends cdk.Stack {
         authRole.addToPolicy(
             new iam.PolicyStatement({
                 effect: iam.Effect.ALLOW,
-                actions: ["s3:PutObject"],
+                actions: ["s3:PutObject", "s3:ListObjectsV2"],
                 resources: [
                     // Users can access their own media files using Cognito identity ID
                     `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
