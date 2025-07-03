@@ -5,9 +5,9 @@ on:
         branches: [prod]
     pull_request:
         branches: [prod]
+    workflow_dispatch:
     repository_dispatch:
         types: [frontend_source_updated_prod]
-    workflow_dispatch:
 
 jobs:
     deploy:
