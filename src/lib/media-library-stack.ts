@@ -1137,6 +1137,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries"),
                     getApiResource("GET", "libraries/*/library"),
                     getApiResource("OPTIONS", "libraries/*/library"),
+                    getApiResource("GET", "libraries/*/movies/*/subtitles"),
+                    getApiResource("OPTIONS", "libraries/*/movies/*/subtitles"),
                     getApiResource("GET", "libraries/*/movies/*/playlist"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/playlist"),
                     getApiResource(
