@@ -265,25 +265,59 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             });
         }
 
+        // First, check if template playlist exists to determine segment count
+        const templatePlaylistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist-template.m3u8`;
+
+        let templatePlaylist;
+        try {
+            const templateResult = await s3.send(
+                new GetObjectCommand({
+                    Bucket: PLAYLIST_BUCKET,
+                    Key: templatePlaylistKey,
+                })
+            );
+            templatePlaylist = await templateResult.Body.transformToString();
+        } catch (error) {
+            if (error.name === "NoSuchKey") {
+                return createResponse(404, {
+                    error: "Movie not found or not yet processed",
+                });
+            }
+            throw error;
+        }
+
+        // Count segments in template to know how many to process
+        const templateLines = templatePlaylist.split("\n");
+        const segmentCount = templateLines.filter((line) =>
+            line.endsWith(".ts")
+        ).length;
+
+        // Reprocess the playlist to ensure fresh URLs
+        console.log(`Reprocessing playlist with ${segmentCount} segments`);
+
+        const reprocessBody = JSON.stringify({
+            segmentCount: segmentCount,
+            totalSegments: segmentCount, // Assume all segments are available
+            isComplete: true, // Assume complete for now
+        });
+
+        const reprocessResult = await processPlaylistTemplate(
+            reprocessBody,
+            ownerIdentityId,
+            movieId,
+            ownerIdentityId // Use owner's identity for processing
+        );
+
+        if (reprocessResult.statusCode !== 200) {
+            console.error("Failed to reprocess playlist:", reprocessResult);
+            return createResponse(500, {
+                error: "Failed to refresh playlist URLs",
+                details: JSON.parse(reprocessResult.body),
+            });
+        }
+
+        // Now get the freshly processed playlist
         const playlistFileKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
-
-        // Get the playlist file from S3
-        const s3Params = {
-            Bucket: PLAYLIST_BUCKET,
-            Key: playlistFileKey,
-        };
-
-        console.log("S3 params:", s3Params);
-
-        const s3Result = await s3.send(new GetObjectCommand(s3Params));
-        let playlistContent = await s3Result.Body.transformToString();
-
-        // // Parse the playlist and replace segment URLs with pre-signed URLs
-        // const updatedPlaylist = await generatePresignedPlaylist(
-        //     playlistContent,
-        //     ownerIdentityId,
-        //     movieId
-        // );
 
         // Generate pre-signed URL for the playlist file
         const command = new GetObjectCommand({
@@ -295,7 +329,11 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             expiresIn: Math.floor(Number(`${MOVIE_PRE_SIGNED_URL_EXPIRATION}`)),
         });
 
-        return createResponse(200, { playlistUrl: presignedUrl });
+        return createResponse(200, {
+            playlistUrl: presignedUrl,
+            reprocessed: true,
+            segmentCount: segmentCount,
+        });
     } catch (error) {
         if (error.name === "NoSuchKey") {
             return createResponse(404, { error: "Playlist not found" });
