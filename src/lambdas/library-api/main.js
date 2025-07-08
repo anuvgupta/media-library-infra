@@ -87,6 +87,14 @@ exports.handler = async (event) => {
                         identityId
                     );
                 }
+            case "/libraries/{ownerIdentityId}/movies/{movieId}/subtitles":
+                if (httpMethod === "GET") {
+                    return await getMovieSubtitles(
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId
+                    );
+                }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist":
                 if (httpMethod === "GET") {
                     return await getMoviePlaylist(
@@ -242,6 +250,68 @@ async function getLibraryJson(ownerIdentityId, identityId) {
         }
         console.error("Error getting library.json:", error);
         throw error;
+    }
+}
+
+async function getMovieSubtitles(ownerIdentityId, movieId, identityId) {
+    try {
+        console.log("Getting subtitles for movie:", movieId);
+
+        // Check if user has access to this library
+        const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
+        if (!hasAccess) {
+            return createResponse(403, {
+                error: "Access denied to this library",
+            });
+        }
+
+        // List subtitle files in S3
+        const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
+        const listParams = {
+            Bucket: MEDIA_BUCKET,
+            Prefix: `media/${ownerIdentityId}/movie/${movieId}/subtitles/`,
+            MaxKeys: 50,
+        };
+
+        const listResult = await s3.send(new ListObjectsV2Command(listParams));
+
+        if (!listResult.Contents || listResult.Contents.length === 0) {
+            return createResponse(200, { subtitles: [] });
+        }
+
+        // Generate pre-signed URLs for subtitle files
+        const subtitles = await Promise.all(
+            listResult.Contents.map(async (object) => {
+                const filename = object.Key.split("/").pop();
+
+                // Parse language from filename (subtitle_eng_0.vtt -> eng)
+                const languageMatch = filename.match(/subtitle_([^_]+)_/);
+                const language = languageMatch ? languageMatch[1] : "unknown";
+
+                const command = new GetObjectCommand({
+                    Bucket: MEDIA_BUCKET,
+                    Key: object.Key,
+                });
+
+                const url = await getSignedUrl(s3, command, {
+                    expiresIn: Math.floor(
+                        Number(MOVIE_PRE_SIGNED_URL_EXPIRATION)
+                    ),
+                });
+
+                return {
+                    language: language,
+                    label: language.toUpperCase(),
+                    url: url,
+                    filename: filename,
+                };
+            })
+        );
+
+        return createResponse(200, { subtitles });
+    } catch (error) {
+        console.error("Error getting movie subtitles:", error);
+        return createResponse(500, { error: "Failed to get subtitles" });
     }
 }
 
@@ -815,6 +885,14 @@ async function createOrUpdateLibraryAccess(
             libraryRecord.createdAt = currentTime;
             console.log("Creating new LibraryAccess record");
         }
+
+        // Put the record (this will create or update)
+        await dynamodb.send(
+            new PutCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Item: libraryRecord,
+            })
+        );
 
         console.log(
             `LibraryAccess record ${
