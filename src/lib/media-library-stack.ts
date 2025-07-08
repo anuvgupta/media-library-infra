@@ -817,9 +817,18 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /libraries/{ownerIdentityId}/movies/{movieId}/playlist - Get movie playlist
+        // GET /libraries/{ownerIdentityId}/movies/{movieId}/subtitles - Get movie subtitles
         const moviesResource = ownerLibraryResource.addResource("movies");
         const movieResource = moviesResource.addResource("{movieId}");
+        const subtitlesResource = movieResource.addResource("subtitles");
+        subtitlesResource.addMethod("GET", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.movieId": true,
+            },
+        });
+        // GET /libraries/{ownerIdentityId}/movies/{movieId}/playlist - Get movie playlist
         const playlistResource = movieResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
