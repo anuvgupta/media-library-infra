@@ -358,17 +358,31 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 
         // Count segments in template to know how many to process
         const templateLines = templatePlaylist.split("\n");
-        const segmentCount = templateLines.filter((line) =>
+        const totalSegmentCount = templateLines.filter((line) =>
             line.endsWith(".ts")
         ).length;
 
+        // Check how many segments are actually uploaded to S3
+        const listParams = {
+            Bucket: MEDIA_BUCKET,
+            Prefix: `media/${ownerIdentityId}/movie/${movieId}/segments/`,
+            MaxKeys: 1000,
+        };
+
+        const listResult = await s3.send(new ListObjectsV2Command(listParams));
+        const actualUploadedSegments = listResult.Contents
+            ? listResult.Contents.length
+            : 0;
+
         // Reprocess the playlist to ensure fresh URLs
-        console.log(`Reprocessing playlist with ${segmentCount} segments`);
+        console.log(
+            `Reprocessing playlist with ${actualUploadedSegments}/${totalSegmentsInTemplate} segments`
+        );
 
         const reprocessBody = JSON.stringify({
-            segmentCount: segmentCount,
-            totalSegments: segmentCount, // Assume all segments are available
-            isComplete: true, // Assume complete for now
+            segmentCount: actualUploadedSegments, // Number actually uploaded
+            totalSegments: totalSegmentsInTemplate, // Total that will exist when complete
+            isComplete: actualUploadedSegments >= totalSegmentsInTemplate,
         });
 
         const reprocessResult = await processPlaylistTemplate(
