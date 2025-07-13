@@ -63,6 +63,9 @@ export class MediaLibraryStack extends cdk.Stack {
             `https://${props.domainName}`,
             "http://localhost:3000",
             "http://localhost:8080",
+            "https://localhost:3000",
+            "https://localhost:8080",
+            "https://localhost:8443",
         ];
         const allowedOriginsProd = [`https://${props.domainName}`];
         const allowedOrigins =

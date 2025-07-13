@@ -345,7 +345,6 @@ async function getMovieSubtitles(
         }
 
         // List subtitle files in S3
-        const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
         const listParams = {
             Bucket: MEDIA_BUCKET,
             Prefix: `media/${ownerIdentityId}/movie/${movieId}/subtitles/`,
