@@ -362,7 +362,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 
         // Count segments in template to know how many to process
         const templateLines = templatePlaylist.split("\n");
-        const totalSegmentCount = templateLines.filter((line) =>
+        const totalSegmentsInTemplate = templateLines.filter((line) =>
             line.endsWith(".ts")
         ).length;
 
@@ -420,7 +420,7 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         return createResponse(200, {
             playlistUrl: presignedUrl,
             reprocessed: true,
-            segmentCount: segmentCount,
+            segmentCount: actualUploadedSegments,
         });
     } catch (error) {
         if (error.name === "NoSuchKey") {
