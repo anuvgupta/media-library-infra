@@ -30,6 +30,7 @@ const USER_POOL_ID = process.env.USER_POOL_ID;
 const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
 const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
+const MOVIE_UPLOAD_STATUS_TABLE = process.env.MOVIE_UPLOAD_STATUS_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET_NAME;
@@ -133,6 +134,23 @@ exports.handler = async (event) => {
             case "/libraries/{ownerIdentityId}/movies/{movieId}/request":
                 if (httpMethod === "POST") {
                     return await requestMovie(
+                        event.body,
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId,
+                        requestOrigin
+                    );
+                }
+            case "/libraries/{ownerIdentityId}/movies/{movieId}/status":
+                if (httpMethod === "GET") {
+                    return await getMovieUploadStatus(
+                        pathParameters.ownerIdentityId,
+                        pathParameters.movieId,
+                        identityId,
+                        requestOrigin
+                    );
+                } else if (httpMethod === "POST") {
+                    return await updateMovieUploadStatus(
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
@@ -1435,6 +1453,187 @@ async function requestMovie(
         );
     } catch (error) {
         console.error("Error requesting movie:", error);
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
+    }
+}
+
+// Update movie upload status (only owner can update)
+async function updateMovieUploadStatus(
+    body,
+    ownerIdentityId,
+    movieId,
+    requestingIdentityId,
+    requestOrigin
+) {
+    try {
+        console.log("Updating upload status for movie:", movieId);
+
+        // Validate requesting user owns the content
+        if (ownerIdentityId !== requestingIdentityId) {
+            return createResponse(
+                403,
+                {
+                    error: "You can only update upload status for your own content",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        const requestData = JSON.parse(body);
+        const { percentage, eta, stageName, message } = requestData;
+
+        // Validate required fields
+        if (
+            typeof percentage !== "number" ||
+            percentage < 0 ||
+            percentage > 100
+        ) {
+            return createResponse(
+                400,
+                {
+                    error: "percentage must be a number between 0 and 100",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        if (!stageName || typeof stageName !== "string") {
+            return createResponse(
+                400,
+                {
+                    error: "stageName is required and must be a string",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        const currentTime = new Date().toISOString();
+
+        // Create status record with TTL (expire after 7 days)
+        const statusRecord = {
+            ownerIdentityId,
+            movieId,
+            percentage,
+            stageName,
+            updatedAt: currentTime,
+            expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days from now
+        };
+
+        // Optional fields
+        if (eta) {
+            statusRecord.eta = eta;
+        }
+        if (message) {
+            statusRecord.message = message;
+        }
+
+        // Save the status record
+        await dynamodb.send(
+            new PutCommand({
+                TableName: MOVIE_UPLOAD_STATUS_TABLE,
+                Item: statusRecord,
+            })
+        );
+
+        console.log("Upload status updated successfully");
+
+        return createResponse(
+            200,
+            {
+                message: "Upload status updated successfully",
+                status: statusRecord,
+            },
+            "application/json",
+            requestOrigin
+        );
+    } catch (error) {
+        console.error("Error updating upload status:", error);
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
+    }
+}
+
+// Get movie upload status (anyone with library access can view)
+async function getMovieUploadStatus(
+    ownerIdentityId,
+    movieId,
+    identityId,
+    requestOrigin
+) {
+    try {
+        console.log(
+            "Getting upload status for owner:",
+            ownerIdentityId,
+            "movie:",
+            movieId,
+            "requested by:",
+            identityId
+        );
+
+        // Check if user has access to this library
+        const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
+        if (!hasAccess) {
+            return createResponse(
+                403,
+                {
+                    error: "Access denied to this library",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        // Get the upload status record
+        const result = await dynamodb.send(
+            new GetCommand({
+                TableName: MOVIE_UPLOAD_STATUS_TABLE,
+                Key: {
+                    ownerIdentityId,
+                    movieId,
+                },
+            })
+        );
+
+        if (!result.Item) {
+            return createResponse(
+                404,
+                {
+                    error: "Upload status not found",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        // Remove internal fields before returning
+        const { expiresAt, ...statusData } = result.Item;
+
+        return createResponse(
+            200,
+            statusData,
+            "application/json",
+            requestOrigin
+        );
+    } catch (error) {
+        console.error("Error getting upload status:", error);
         return createResponse(
             500,
             {

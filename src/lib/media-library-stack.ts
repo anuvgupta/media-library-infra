@@ -140,6 +140,28 @@ export class MediaLibraryStack extends cdk.Stack {
             },
             projectionType: dynamodb.ProjectionType.ALL,
         });
+        // Table for tracking movie upload status
+        const movieUploadStatusTable = new dynamodb.Table(
+            this,
+            "MovieUploadStatusTable",
+            {
+                partitionKey: {
+                    name: "ownerIdentityId",
+                    type: dynamodb.AttributeType.STRING,
+                },
+                sortKey: {
+                    name: "movieId",
+                    type: dynamodb.AttributeType.STRING,
+                },
+                billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+                removalPolicy:
+                    props.stageName === "dev"
+                        ? cdk.RemovalPolicy.DESTROY
+                        : cdk.RemovalPolicy.RETAIN,
+                // TTL for automatic cleanup of old status records
+                timeToLiveAttribute: "expiresAt",
+            }
+        );
 
         /* SQS QUEUE - WORKER COMMANDS */
         // Create SQS queue for worker commands
@@ -590,7 +612,9 @@ export class MediaLibraryStack extends cdk.Stack {
                     LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
                     MEDIA_BUCKET_NAME: mediaBucket.bucketName,
-                    ALLOWED_ORIGINS: allowedOrigins.join(","), // Changed from ALLOWED_ORIGIN
+                    MOVIE_UPLOAD_STATUS_TABLE_NAME:
+                        movieUploadStatusTable.tableName,
+                    ALLOWED_ORIGINS: allowedOrigins.join(","),
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
                     SQS_QUEUE_URL: workerCommandQueue.queueUrl,
@@ -649,6 +673,7 @@ export class MediaLibraryStack extends cdk.Stack {
         // Grant permissions to the Lambda function
         libraryAccessTable.grantReadWriteData(libraryApiLambda);
         librarySharedTable.grantReadWriteData(libraryApiLambda);
+        movieUploadStatusTable.grantReadWriteData(libraryApiLambda);
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantReadWrite(libraryApiLambda);
         mediaBucket.grantRead(libraryApiLambda);
@@ -856,6 +881,22 @@ export class MediaLibraryStack extends cdk.Stack {
         });
         const requestResource = movieResource.addResource("request");
         requestResource.addMethod("POST", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.movieId": true,
+            },
+        });
+        // GET/POST /libraries/{ownerIdentityId}/movies/{movieId}/status - Movie upload status
+        const statusResource = movieResource.addResource("status");
+        statusResource.addMethod("GET", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+                "method.request.path.movieId": true,
+            },
+        });
+        statusResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
@@ -1169,6 +1210,9 @@ export class MediaLibraryStack extends cdk.Stack {
                     ),
                     getApiResource("POST", "libraries/*/movies/*/request"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/request"),
+                    getApiResource("GET", "libraries/*/movies/*/status"),
+                    getApiResource("POST", "libraries/*/movies/*/status"),
+                    getApiResource("OPTIONS", "libraries/*/movies/*/status"),
                     getApiResource("POST", "libraries/*/share"),
                     getApiResource("OPTIONS", "libraries/*/share"),
                     getApiResource("GET", "libraries/*/share"),
@@ -1253,6 +1297,10 @@ export class MediaLibraryStack extends cdk.Stack {
         new cdk.CfnOutput(this, "LibraryAccessTableName", {
             value: libraryAccessTable.tableName,
             description: "Database table for library access records",
+        });
+        new cdk.CfnOutput(this, "MovieUploadStatusTableName", {
+            value: movieUploadStatusTable.tableName,
+            description: "Database table for movie upload status tracking",
         });
         new cdk.CfnOutput(this, "LibraryBucketName", {
             value: libraryBucket.bucketName,
