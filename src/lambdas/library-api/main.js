@@ -6,7 +6,11 @@ const {
     QueryCommand,
     DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const {
+    S3Client,
+    GetObjectCommand,
+    ListObjectsV2Command,
+} = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { Upload } = require("@aws-sdk/lib-storage");
 const {
