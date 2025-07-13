@@ -59,7 +59,15 @@ export class MediaLibraryStack extends cdk.Stack {
         super(scope, id, props);
 
         /* CONSTANTS */
-        const allowedOrigin = `https://${props.domainName}`;
+        const allowedOriginsDev = [
+            `https://${props.domainName}`,
+            "http://localhost:3000",
+            "http://localhost:8080",
+        ];
+        const allowedOriginsProd = [`https://${props.domainName}`];
+        const allowedOrigins =
+            props.stageName === "dev" ? allowedOriginsDev : allowedOriginsProd;
+        const allowedOrigin = allowedOrigins[0];
 
         /* SSL CERTIFICATES - CUSTOM DOMAINS */
         // Create SSL certificate for the domain
@@ -191,7 +199,7 @@ export class MediaLibraryStack extends cdk.Stack {
         // Download restriction - CORS origin
         libraryBucket.addCorsRule({
             allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
-            allowedOrigins: [allowedOrigin],
+            allowedOrigins: allowedOrigins,
             allowedHeaders: ["*"],
             exposedHeaders: ["ETag"],
             maxAge: 3000,
@@ -230,7 +238,7 @@ export class MediaLibraryStack extends cdk.Stack {
         // Download restriction - CORS origin
         mediaBucket.addCorsRule({
             allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
-            allowedOrigins: [allowedOrigin],
+            allowedOrigins: allowedOrigins,
             allowedHeaders: ["*"],
             exposedHeaders: [
                 "ETag",
@@ -278,7 +286,7 @@ export class MediaLibraryStack extends cdk.Stack {
         // Download restriction - CORS origin
         playlistBucket.addCorsRule({
             allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
-            allowedOrigins: [allowedOrigin],
+            allowedOrigins: allowedOrigins,
             allowedHeaders: ["*"],
             exposedHeaders: [
                 "ETag",
@@ -582,7 +590,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
                     MEDIA_BUCKET_NAME: mediaBucket.bucketName,
-                    ALLOWED_ORIGIN: allowedOrigin,
+                    ALLOWED_ORIGINS: allowedOrigins.join(","), // Changed from ALLOWED_ORIGIN
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
                     SQS_QUEUE_URL: workerCommandQueue.queueUrl,
@@ -667,7 +675,7 @@ export class MediaLibraryStack extends cdk.Stack {
 
         /* API GATEWAY - CORS CONFIG */
         const apiCorsConfig = {
-            allowOrigins: [allowedOrigin],
+            allowOrigins: allowedOrigins,
             allowMethods: ["GET", "POST", "DELETE"],
             allowHeaders: [
                 "Content-Type",
@@ -682,8 +690,9 @@ export class MediaLibraryStack extends cdk.Stack {
             allowCredentials: true,
         };
         const getCORSResponseParametersForAPIGateway = () => {
+            const corsOrigin = props.stageName === "dev" ? "*" : allowedOrigin;
             return {
-                "Access-Control-Allow-Origin": `'${allowedOrigin}'`,
+                "Access-Control-Allow-Origin": `'${corsOrigin}'`,
                 "Access-Control-Allow-Headers":
                     "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,x-amz-content-sha256'",
                 "Access-Control-Allow-Methods": "'GET,POST,DELETE,OPTIONS'",

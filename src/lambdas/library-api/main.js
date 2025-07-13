@@ -49,14 +49,20 @@ const cognitoIdentityProviderClient = new CognitoIdentityProviderClient({
 
 exports.handler = async (event) => {
     const { httpMethod, pathParameters, requestContext } = event;
+    const requestOrigin = event.headers?.origin || event.headers?.Origin;
     console.log("Starting request handler");
 
     // // Extract user ID from Cognito JWT token
     // const authorizer = requestContext.authorizer;
     // if (!authorizer) {
-    //     return createResponse(401, {
-    //         error: "Cognito authorizer not provided",
-    //     });
+    //     return createResponse(
+    //         401,
+    //         {
+    //             error: "Cognito authorizer not provided",
+    //         },
+    //         "application/json",
+    //         requestOrigin
+    //     );
     // }
     // const userId = authorizer.claims.sub;
     // console.log("User ID:", userId);
@@ -64,9 +70,13 @@ exports.handler = async (event) => {
     // Extract Identity ID from request context
     const identityId = requestContext.identity?.cognitoIdentityId;
     if (!identityId) {
-        return createResponse(401, {
-            error: "Cognito Identity ID not provided",
-        });
+        return createResponse(
+            401,
+            {
+                error: "Cognito Identity ID not provided",
+            },
+            requestOrigin
+        );
     }
     console.log("Identity ID:", identityId);
 
@@ -82,13 +92,14 @@ exports.handler = async (event) => {
         switch (event.resource) {
             case "/libraries":
                 if (httpMethod === "GET") {
-                    return await getUserLibraries(identityId);
+                    return await getUserLibraries(identityId, requestOrigin);
                 }
             case "/libraries/{ownerIdentityId}/library":
                 if (httpMethod === "GET") {
                     return await getLibraryJson(
                         pathParameters.ownerIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/subtitles":
@@ -96,7 +107,8 @@ exports.handler = async (event) => {
                     return await getMovieSubtitles(
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist":
@@ -104,7 +116,8 @@ exports.handler = async (event) => {
                     return await getMoviePlaylist(
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist/process":
@@ -113,7 +126,8 @@ exports.handler = async (event) => {
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/request":
@@ -122,7 +136,8 @@ exports.handler = async (event) => {
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/share":
@@ -130,12 +145,14 @@ exports.handler = async (event) => {
                     return await shareLibrary(
                         event.body,
                         pathParameters.ownerIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 } else if (httpMethod === "GET") {
                     return await listSharedAccesses(
                         pathParameters.ownerIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/share/{shareWithIdentityId}":
@@ -143,7 +160,8 @@ exports.handler = async (event) => {
                     return await removeSharedAccess(
                         pathParameters.ownerIdentityId,
                         pathParameters.shareWithIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/access":
@@ -151,30 +169,44 @@ exports.handler = async (event) => {
                     return await createOrUpdateLibraryAccess(
                         event.body,
                         pathParameters.ownerIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 } else if (httpMethod === "GET") {
                     return await getLibraryAccess(
                         pathParameters.ownerIdentityId,
-                        identityId
+                        identityId,
+                        requestOrigin
                     );
                 }
             default:
-                return createResponse(404, {
-                    error: "Endpoint/method not found",
-                });
+                return createResponse(
+                    404,
+                    {
+                        error: "Endpoint/method not found",
+                    },
+                    "application/json",
+                    requestOrigin
+                );
         }
     } catch (error) {
         console.error("Error:", error);
-        return createResponse(500, {
-            error: "Internal server error",
-            details: error.message,
-        });
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 };
 
+/* API ROUTES */
+
 // Get all libraries accessible to the user
-async function getUserLibraries(identityId) {
+async function getUserLibraries(identityId, requestOrigin) {
     try {
         console.log("Getting libraries for identity:", identityId);
 
@@ -211,7 +243,7 @@ async function getUserLibraries(identityId) {
             })),
         };
 
-        return createResponse(200, result);
+        return createResponse(200, result, "application/json", requestOrigin);
     } catch (error) {
         console.error("Error getting user libraries:", error);
         throw error;
@@ -219,7 +251,7 @@ async function getUserLibraries(identityId) {
 }
 
 // Get library.json for a specific user's library
-async function getLibraryJson(ownerIdentityId, identityId) {
+async function getLibraryJson(ownerIdentityId, identityId, requestOrigin) {
     try {
         console.log(
             "Getting library JSON for owner:",
@@ -231,9 +263,14 @@ async function getLibraryJson(ownerIdentityId, identityId) {
         // Check if user has access to this library
         const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
         if (!hasAccess) {
-            return createResponse(403, {
-                error: "Access denied to this library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "Access denied to this library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Get the library.json file from S3
@@ -247,26 +284,46 @@ async function getLibraryJson(ownerIdentityId, identityId) {
         const s3Result = await s3.send(new GetObjectCommand(s3Params));
         const libraryData = JSON.parse(await s3Result.Body.transformToString());
 
-        return createResponse(200, libraryData);
+        return createResponse(
+            200,
+            libraryData,
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         if (error.name === "NoSuchKey") {
-            return createResponse(404, { error: "Library not found" });
+            return createResponse(
+                404,
+                { error: "Library not found" },
+                "application/json",
+                requestOrigin
+            );
         }
         console.error("Error getting library.json:", error);
         throw error;
     }
 }
 
-async function getMovieSubtitles(ownerIdentityId, movieId, identityId) {
+async function getMovieSubtitles(
+    ownerIdentityId,
+    movieId,
+    identityId,
+    requestOrigin
+) {
     try {
         console.log("Getting subtitles for movie:", movieId);
 
         // Check if user has access to this library
         const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
         if (!hasAccess) {
-            return createResponse(403, {
-                error: "Access denied to this library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "Access denied to this library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // List subtitle files in S3
@@ -280,7 +337,12 @@ async function getMovieSubtitles(ownerIdentityId, movieId, identityId) {
         const listResult = await s3.send(new ListObjectsV2Command(listParams));
 
         if (!listResult.Contents || listResult.Contents.length === 0) {
-            return createResponse(200, { subtitles: [] });
+            return createResponse(
+                200,
+                { subtitles: [] },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Generate pre-signed URLs for subtitle files
@@ -312,15 +374,30 @@ async function getMovieSubtitles(ownerIdentityId, movieId, identityId) {
             })
         );
 
-        return createResponse(200, { subtitles });
+        return createResponse(
+            200,
+            { subtitles },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error getting movie subtitles:", error);
-        return createResponse(500, { error: "Failed to get subtitles" });
+        return createResponse(
+            500,
+            { error: "Failed to get subtitles" },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
 // Get playlist for a specific movie
-async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
+async function getMoviePlaylist(
+    ownerIdentityId,
+    movieId,
+    identityId,
+    requestOrigin
+) {
     try {
         console.log(
             "Getting playlist for owner:",
@@ -334,9 +411,14 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
         // Check if user has access to this library
         const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
         if (!hasAccess) {
-            return createResponse(403, {
-                error: "Access denied to this library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "Access denied to this library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // First, check if template playlist exists to determine segment count
@@ -353,9 +435,14 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             templatePlaylist = await templateResult.Body.transformToString();
         } catch (error) {
             if (error.name === "NoSuchKey") {
-                return createResponse(404, {
-                    error: "Movie not found or not yet processed",
-                });
+                return createResponse(
+                    404,
+                    {
+                        error: "Movie not found or not yet processed",
+                    },
+                    "application/json",
+                    requestOrigin
+                );
             }
             throw error;
         }
@@ -393,15 +480,21 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             reprocessBody,
             ownerIdentityId,
             movieId,
-            ownerIdentityId // Use owner's identity for processing
+            ownerIdentityId, // Use owner's identity for processing
+            requestOrigin
         );
 
         if (reprocessResult.statusCode !== 200) {
             console.error("Failed to reprocess playlist:", reprocessResult);
-            return createResponse(500, {
-                error: "Failed to refresh playlist URLs",
-                details: JSON.parse(reprocessResult.body),
-            });
+            return createResponse(
+                500,
+                {
+                    error: "Failed to refresh playlist URLs",
+                    details: JSON.parse(reprocessResult.body),
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Now get the freshly processed playlist
@@ -417,14 +510,24 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
             expiresIn: Math.floor(Number(`${MOVIE_PRE_SIGNED_URL_EXPIRATION}`)),
         });
 
-        return createResponse(200, {
-            playlistUrl: presignedUrl,
-            reprocessed: true,
-            segmentCount: actualUploadedSegments,
-        });
+        return createResponse(
+            200,
+            {
+                playlistUrl: presignedUrl,
+                reprocessed: true,
+                segmentCount: actualUploadedSegments,
+            },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         if (error.name === "NoSuchKey") {
-            return createResponse(404, { error: "Playlist not found" });
+            return createResponse(
+                404,
+                { error: "Playlist not found" },
+                "application/json",
+                requestOrigin
+            );
         }
         console.error("Error getting playlist:", error);
         throw error;
@@ -432,22 +535,37 @@ async function getMoviePlaylist(ownerIdentityId, movieId, identityId) {
 }
 
 // Share library with user
-async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
+async function shareLibrary(
+    body,
+    ownerIdentityId,
+    requestingIdentityId,
+    requestOrigin
+) {
     let { ownerUsername, sharedWith } = JSON.parse(body);
 
     // Validate requesting user owns the library
     if (ownerIdentityId !== requestingIdentityId) {
-        return createResponse(403, {
-            error: "You can only share your own library",
-        });
+        return createResponse(
+            403,
+            {
+                error: "You can only share your own library",
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 
     try {
         // Validate required fields
         if (!sharedWith) {
-            return createResponse(400, {
-                error: "sharedWith is required (username or email)",
-            });
+            return createResponse(
+                400,
+                {
+                    error: "sharedWith is required (username or email)",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Check if library exists and is owned by the requesting user
@@ -460,15 +578,25 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
             new GetCommand(libraryParams)
         );
         if (!libraryResult.Item) {
-            return createResponse(404, { error: "Library not found" });
+            return createResponse(
+                404,
+                { error: "Library not found" },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Resolve sharedWith to identity ID and username
         const userInfo = await resolveUserInfo(sharedWith);
         if (!userInfo) {
-            return createResponse(404, {
-                error: "User not found with provided username or email",
-            });
+            return createResponse(
+                404,
+                {
+                    error: "User not found with provided username or email",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         const {
@@ -478,9 +606,14 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
 
         // Check if trying to share with themselves
         if (shareWithIdentityId === ownerIdentityId) {
-            return createResponse(400, {
-                error: "Cannot share library with yourself",
-            });
+            return createResponse(
+                400,
+                {
+                    error: "Cannot share library with yourself",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Check if already shared with this user
@@ -511,133 +644,34 @@ async function shareLibrary(body, ownerIdentityId, requestingIdentityId) {
 
         await dynamodb.send(new PutCommand(shareParams));
 
-        return createResponse(200, {
-            message: existingShare.Item
-                ? "Library share updated successfully"
-                : "Library shared successfully",
-            sharedWith: {
-                identityId: shareWithIdentityId,
-                username: sharedWithUsername,
-                originalInput: sharedWith,
+        return createResponse(
+            200,
+            {
+                message: existingShare.Item
+                    ? "Library share updated successfully"
+                    : "Library shared successfully",
+                sharedWith: {
+                    identityId: shareWithIdentityId,
+                    username: sharedWithUsername,
+                    originalInput: sharedWith,
+                },
             },
-        });
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error sharing library:", error);
-        return createResponse(500, { error: "Internal server error" });
-    }
-}
-
-// Updated resolveUserInfo function
-async function resolveUserInfo(sharedWith) {
-    try {
-        console.log("Resolving user info for:", sharedWith);
-
-        // Step 1: Resolve to username using Cognito
-        const username = await resolveToUsername(sharedWith);
-        if (!username) {
-            return null;
-        }
-
-        // Step 2: Get identity ID from library access table using username
-        const identityId = await getIdentityIdFromUsername(username);
-        if (!identityId) {
-            console.log(
-                "Username found in Cognito but no library exists:",
-                username
-            );
-            return null;
-        }
-
-        return {
-            username,
-            identityId,
-        };
-    } catch (error) {
-        console.error("Error resolving user info:", error);
-        return null;
-    }
-}
-
-// Helper function to resolve email or username to username
-async function resolveToUsername(sharedWith) {
-    const isEmail = sharedWith.includes("@");
-
-    try {
-        if (isEmail) {
-            // Search by email
-            const listUsersParams = {
-                UserPoolId: USER_POOL_ID,
-                Filter: `email = "${sharedWith}"`,
-                Limit: 1,
-            };
-
-            const listResult = await cognitoIdentityProviderClient.send(
-                new ListUsersCommand(listUsersParams)
-            );
-
-            if (!listResult.Users || listResult.Users.length === 0) {
-                console.log("No user found with email:", sharedWith);
-                return null;
-            }
-
-            const cognitoUser = listResult.Users[0];
-            const usernameFromAttr = cognitoUser.UserAttributes?.find(
-                (attr) => attr.Name === "preferred_username"
-            );
-            return usernameFromAttr?.Value || cognitoUser.Username;
-        } else {
-            // Assume it's a username, verify it exists in Cognito
-            const getUserParams = {
-                UserPoolId: USER_POOL_ID,
-                Username: sharedWith,
-            };
-
-            const getUserResult = await cognitoIdentityProviderClient.send(
-                new AdminGetUserCommand(getUserParams)
-            );
-            const usernameFromAttr = getUserResult.UserAttributes?.find(
-                (attr) => attr.Name === "preferred_username"
-            );
-            return usernameFromAttr?.Value || getUserResult.Username;
-        }
-    } catch (error) {
-        if (error.name === "UserNotFoundException") {
-            console.log("No user found with username:", sharedWith);
-            return null;
-        }
-        throw error;
-    }
-}
-
-// Helper function to get identity ID from username using library access table
-async function getIdentityIdFromUsername(username) {
-    try {
-        const queryParams = {
-            TableName: LIBRARY_ACCESS_TABLE,
-            IndexName: "OwnerUsernameIndex",
-            KeyConditionExpression: "ownerUsername = :username",
-            ExpressionAttributeValues: {
-                ":username": username,
-            },
-            Limit: 1,
-        };
-
-        const result = await dynamodb.send(new QueryCommand(queryParams));
-
-        if (!result.Items || result.Items.length === 0) {
-            console.log("No library found for username:", username);
-            return null;
-        }
-
-        return result.Items[0].ownerIdentityId;
-    } catch (error) {
-        console.error("Error querying library access table:", error);
-        throw error;
+        return createResponse(
+            500,
+            { error: "Internal server error" },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
 // List all users who have access to a library
-async function listSharedAccesses(ownerIdentityId, identityId) {
+async function listSharedAccesses(ownerIdentityId, identityId, requestOrigin) {
     try {
         console.log(
             "Listing shared accesses for owner:",
@@ -648,9 +682,14 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
 
         // Validate requesting user owns the library
         if (ownerIdentityId !== identityId) {
-            return createResponse(403, {
-                error: "You can only view shared accesses for your own library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "You can only view shared accesses for your own library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Check if library exists
@@ -662,7 +701,12 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
         );
 
         if (!library.Item) {
-            return createResponse(404, { error: "Library not found" });
+            return createResponse(
+                404,
+                { error: "Library not found" },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Get all shared accesses for this library
@@ -691,10 +735,15 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
             totalSharedUsers: enrichedAccesses.length,
         };
 
-        return createResponse(200, result);
+        return createResponse(200, result, "application/json", requestOrigin);
     } catch (error) {
         console.error("Error listing shared accesses:", error);
-        return createResponse(500, { error: "Internal server error" });
+        return createResponse(
+            500,
+            { error: "Internal server error" },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
@@ -702,7 +751,8 @@ async function listSharedAccesses(ownerIdentityId, identityId) {
 async function removeSharedAccess(
     ownerIdentityId,
     shareWithIdentityId,
-    identityId
+    identityId,
+    requestOrigin
 ) {
     try {
         console.log(
@@ -716,9 +766,14 @@ async function removeSharedAccess(
 
         // Validate requesting user owns the library
         if (ownerIdentityId !== identityId) {
-            return createResponse(403, {
-                error: "You can only remove shared access from your own library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "You can only remove shared access from your own library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Check if library exists
@@ -730,7 +785,12 @@ async function removeSharedAccess(
         );
 
         if (!library.Item) {
-            return createResponse(404, { error: "Library not found" });
+            return createResponse(
+                404,
+                { error: "Library not found" },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Check if shared access exists
@@ -745,7 +805,12 @@ async function removeSharedAccess(
         );
 
         if (!sharedAccess.Item) {
-            return createResponse(404, { error: "Shared access not found" });
+            return createResponse(
+                404,
+                { error: "Shared access not found" },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Remove the shared access
@@ -759,68 +824,23 @@ async function removeSharedAccess(
             })
         );
 
-        return createResponse(200, {
-            message: "Shared access removed successfully",
-            removedIdentityId: shareWithIdentityId,
-        });
+        return createResponse(
+            200,
+            {
+                message: "Shared access removed successfully",
+                removedIdentityId: shareWithIdentityId,
+            },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error removing shared access:", error);
-        return createResponse(500, { error: "Internal server error" });
-    }
-}
-
-// Check if user has access to a library
-async function checkLibraryAccess(ownerIdentityId, identityId) {
-    try {
-        console.log(
-            "Checking access for owner:",
-            ownerIdentityId,
-            "identity:",
-            identityId
+        return createResponse(
+            500,
+            { error: "Internal server error" },
+            "application/json",
+            requestOrigin
         );
-
-        // Owner always has access
-        if (ownerIdentityId === identityId) {
-            console.log("User is owner, access granted");
-            return true;
-        }
-
-        // Check if library exists and get its access type
-        const library = await dynamodb.send(
-            new GetCommand({
-                TableName: LIBRARY_ACCESS_TABLE,
-                Key: { ownerIdentityId },
-            })
-        );
-
-        console.log("Library found:", library);
-
-        if (!library.Item) {
-            console.log("Library not found");
-            return false;
-        }
-
-        // if (library.Item.accessType === "public") {
-        //     console.log("Library is public, access granted");
-        //     return true;
-        // }
-
-        // Check if user has shared access
-        const sharedAccess = await dynamodb.send(
-            new GetCommand({
-                TableName: LIBRARY_SHARED_TABLE,
-                Key: {
-                    ownerIdentityId: ownerIdentityId,
-                    sharedWithIdentityId: identityId,
-                },
-            })
-        );
-
-        console.log("Shared access check:", sharedAccess);
-        return !!sharedAccess.Item;
-    } catch (error) {
-        console.error("Error checking library access:", error);
-        return false;
     }
 }
 
@@ -828,7 +848,8 @@ async function checkLibraryAccess(ownerIdentityId, identityId) {
 async function createOrUpdateLibraryAccess(
     body,
     ownerIdentityId,
-    requestingIdentityId
+    requestingIdentityId,
+    requestOrigin
 ) {
     try {
         console.log(
@@ -840,9 +861,14 @@ async function createOrUpdateLibraryAccess(
 
         // Validate requesting user can only modify their own library
         if (ownerIdentityId !== requestingIdentityId) {
-            return createResponse(403, {
-                error: "You can only create/update your own library access record",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "You can only create/update your own library access record",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         const requestData = JSON.parse(body);
@@ -855,15 +881,25 @@ async function createOrUpdateLibraryAccess(
             typeof movieCount !== "number" ||
             typeof collectionCount !== "number"
         ) {
-            return createResponse(400, {
-                error: "movieCount and collectionCount must be numbers",
-            });
+            return createResponse(
+                400,
+                {
+                    error: "movieCount and collectionCount must be numbers",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         if (!lastScanAt || !Date.parse(lastScanAt)) {
-            return createResponse(400, {
-                error: "lastScanAt must be a valid ISO date string",
-            });
+            return createResponse(
+                400,
+                {
+                    error: "lastScanAt must be a valid ISO date string",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         const currentTime = new Date().toISOString();
@@ -918,23 +954,37 @@ async function createOrUpdateLibraryAccess(
             } successfully`
         );
 
-        return createResponse(200, {
-            message: `Library access record ${
-                existingRecord.Item ? "updated" : "created"
-            } successfully`,
-            record: libraryRecord,
-        });
+        return createResponse(
+            200,
+            {
+                message: `Library access record ${
+                    existingRecord.Item ? "updated" : "created"
+                } successfully`,
+                record: libraryRecord,
+            },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error creating/updating library access:", error);
-        return createResponse(500, {
-            error: "Internal server error",
-            details: error.message,
-        });
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
 // Get library access record
-async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
+async function getLibraryAccess(
+    ownerIdentityId,
+    requestingIdentityId,
+    requestOrigin
+) {
     try {
         console.log(
             "Getting library access for owner:",
@@ -945,9 +995,14 @@ async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
 
         // Validate requesting user can only access their own library access record
         if (ownerIdentityId !== requestingIdentityId) {
-            return createResponse(403, {
-                error: "You can only access your own library access record",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "You can only access your own library access record",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Get the library access record
@@ -959,18 +1014,33 @@ async function getLibraryAccess(ownerIdentityId, requestingIdentityId) {
         );
 
         if (!result.Item) {
-            return createResponse(404, {
-                error: "Library access record not found",
-            });
+            return createResponse(
+                404,
+                {
+                    error: "Library access record not found",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
-        return createResponse(200, result.Item);
+        return createResponse(
+            200,
+            result.Item,
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error getting library access:", error);
-        return createResponse(500, {
-            error: "Internal server error",
-            details: error.message,
-        });
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
@@ -978,16 +1048,22 @@ async function processPlaylistTemplate(
     body,
     ownerIdentityId,
     movieId,
-    requestingIdentityId
+    requestingIdentityId,
+    requestOrigin
 ) {
     try {
         console.log("Processing playlist template for movie:", movieId);
 
         // Validate requesting user owns the content
         if (ownerIdentityId !== requestingIdentityId) {
-            return createResponse(403, {
-                error: "You can only process playlists for your own content",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "You can only process playlists for your own content",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         const requestData = JSON.parse(body);
@@ -1009,9 +1085,14 @@ async function processPlaylistTemplate(
             templatePlaylist = await templateResult.Body.transformToString();
         } catch (error) {
             if (error.name === "NoSuchKey") {
-                return createResponse(404, {
-                    error: "Template playlist not found",
-                });
+                return createResponse(
+                    404,
+                    {
+                        error: "Template playlist not found",
+                    },
+                    "application/json",
+                    requestOrigin
+                );
             }
             throw error;
         }
@@ -1256,30 +1337,40 @@ async function processPlaylistTemplate(
             `✅ Playlist processed in ${totalTime}ms (${segmentCount}/${totalSegments} segments, ${existingSegmentUrls.size} URLs reused, ${newPresignedUrls.size} URLs generated)`
         );
 
-        return createResponse(200, {
-            message: "Playlist processed successfully",
-            segmentCount,
-            totalSegments,
-            isComplete,
-            processingTimeMs: totalTime,
-            urlsReused: existingSegmentUrls.size,
-            urlsGenerated: newPresignedUrls.size,
-            efficiency:
-                existingSegmentUrls.size > 0
-                    ? `${Math.round(
-                          (existingSegmentUrls.size /
-                              (existingSegmentUrls.size +
-                                  newPresignedUrls.size)) *
-                              100
-                      )}% URLs reused`
-                    : "No URLs reused (first processing)",
-        });
+        return createResponse(
+            200,
+            {
+                message: "Playlist processed successfully",
+                segmentCount,
+                totalSegments,
+                isComplete,
+                processingTimeMs: totalTime,
+                urlsReused: existingSegmentUrls.size,
+                urlsGenerated: newPresignedUrls.size,
+                efficiency:
+                    existingSegmentUrls.size > 0
+                        ? `${Math.round(
+                              (existingSegmentUrls.size /
+                                  (existingSegmentUrls.size +
+                                      newPresignedUrls.size)) *
+                                  100
+                          )}% URLs reused`
+                        : "No URLs reused (first processing)",
+            },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error processing playlist template:", error);
-        return createResponse(500, {
-            error: "Internal server error",
-            details: error.message,
-        });
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
@@ -1287,7 +1378,8 @@ async function requestMovie(
     body,
     ownerIdentityId,
     movieId,
-    requestingIdentityId
+    requestingIdentityId,
+    requestOrigin
 ) {
     try {
         console.log(
@@ -1305,9 +1397,14 @@ async function requestMovie(
             requestingIdentityId
         );
         if (!hasAccess) {
-            return createResponse(403, {
-                error: "Access denied to this library",
-            });
+            return createResponse(
+                403,
+                {
+                    error: "Access denied to this library",
+                },
+                "application/json",
+                requestOrigin
+            );
         }
 
         // Send SQS message
@@ -1326,26 +1423,55 @@ async function requestMovie(
 
         console.log("Movie upload request sent to SQS queue");
 
-        return createResponse(200, {
-            message: "Movie upload request submitted successfully",
-            movieId: movieId,
-            ownerIdentityId: ownerIdentityId,
-        });
+        return createResponse(
+            200,
+            {
+                message: "Movie upload request submitted successfully",
+                movieId: movieId,
+                ownerIdentityId: ownerIdentityId,
+            },
+            "application/json",
+            requestOrigin
+        );
     } catch (error) {
         console.error("Error requesting movie:", error);
-        return createResponse(500, {
-            error: "Internal server error",
-            details: error.message,
-        });
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 
-function createResponse(statusCode, body, contentType = "application/json") {
+/* HELPERS */
+
+function createResponse(
+    statusCode,
+    body,
+    contentType = "application/json",
+    requestOrigin = null // Get the request origin from the event (you'll need to pass this down)
+) {
+    // Get allowed origins from environment variable
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+        ? process.env.ALLOWED_ORIGINS.split(",")
+        : [process.env.ALLOWED_ORIGIN]; // Fallback to single origin
+
+    // Determine which origin to use in response
+    let responseOrigin = allowedOrigins[0]; // Default to first allowed origin
+
+    if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+        responseOrigin = requestOrigin;
+    }
+
     return {
         statusCode,
         headers: {
             "Content-Type": contentType,
-            "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN,
+            "Access-Control-Allow-Origin": responseOrigin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Headers":
                 "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
@@ -1353,4 +1479,168 @@ function createResponse(statusCode, body, contentType = "application/json") {
         },
         body: typeof body === "string" ? body : JSON.stringify(body),
     };
+}
+
+// Updated resolveUserInfo function
+async function resolveUserInfo(sharedWith) {
+    try {
+        console.log("Resolving user info for:", sharedWith);
+
+        // Step 1: Resolve to username using Cognito
+        const username = await resolveToUsername(sharedWith);
+        if (!username) {
+            return null;
+        }
+
+        // Step 2: Get identity ID from library access table using username
+        const identityId = await getIdentityIdFromUsername(username);
+        if (!identityId) {
+            console.log(
+                "Username found in Cognito but no library exists:",
+                username
+            );
+            return null;
+        }
+
+        return {
+            username,
+            identityId,
+        };
+    } catch (error) {
+        console.error("Error resolving user info:", error);
+        return null;
+    }
+}
+
+// Helper function to resolve email or username to username
+async function resolveToUsername(sharedWith) {
+    const isEmail = sharedWith.includes("@");
+
+    try {
+        if (isEmail) {
+            // Search by email
+            const listUsersParams = {
+                UserPoolId: USER_POOL_ID,
+                Filter: `email = "${sharedWith}"`,
+                Limit: 1,
+            };
+
+            const listResult = await cognitoIdentityProviderClient.send(
+                new ListUsersCommand(listUsersParams)
+            );
+
+            if (!listResult.Users || listResult.Users.length === 0) {
+                console.log("No user found with email:", sharedWith);
+                return null;
+            }
+
+            const cognitoUser = listResult.Users[0];
+            const usernameFromAttr = cognitoUser.UserAttributes?.find(
+                (attr) => attr.Name === "preferred_username"
+            );
+            return usernameFromAttr?.Value || cognitoUser.Username;
+        } else {
+            // Assume it's a username, verify it exists in Cognito
+            const getUserParams = {
+                UserPoolId: USER_POOL_ID,
+                Username: sharedWith,
+            };
+
+            const getUserResult = await cognitoIdentityProviderClient.send(
+                new AdminGetUserCommand(getUserParams)
+            );
+            const usernameFromAttr = getUserResult.UserAttributes?.find(
+                (attr) => attr.Name === "preferred_username"
+            );
+            return usernameFromAttr?.Value || getUserResult.Username;
+        }
+    } catch (error) {
+        if (error.name === "UserNotFoundException") {
+            console.log("No user found with username:", sharedWith);
+            return null;
+        }
+        throw error;
+    }
+}
+
+// Helper function to get identity ID from username using library access table
+async function getIdentityIdFromUsername(username) {
+    try {
+        const queryParams = {
+            TableName: LIBRARY_ACCESS_TABLE,
+            IndexName: "OwnerUsernameIndex",
+            KeyConditionExpression: "ownerUsername = :username",
+            ExpressionAttributeValues: {
+                ":username": username,
+            },
+            Limit: 1,
+        };
+
+        const result = await dynamodb.send(new QueryCommand(queryParams));
+
+        if (!result.Items || result.Items.length === 0) {
+            console.log("No library found for username:", username);
+            return null;
+        }
+
+        return result.Items[0].ownerIdentityId;
+    } catch (error) {
+        console.error("Error querying library access table:", error);
+        throw error;
+    }
+}
+
+// Check if user has access to a library
+async function checkLibraryAccess(ownerIdentityId, identityId) {
+    try {
+        console.log(
+            "Checking access for owner:",
+            ownerIdentityId,
+            "identity:",
+            identityId
+        );
+
+        // Owner always has access
+        if (ownerIdentityId === identityId) {
+            console.log("User is owner, access granted");
+            return true;
+        }
+
+        // Check if library exists and get its access type
+        const library = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerIdentityId },
+            })
+        );
+
+        console.log("Library found:", library);
+
+        if (!library.Item) {
+            console.log("Library not found");
+            return false;
+        }
+
+        // if (library.Item.accessType === "public") {
+        //     console.log("Library is public, access granted");
+        //     return true;
+        // }
+
+        // Check if user has shared access
+        const sharedAccess = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_SHARED_TABLE,
+                Key: {
+                    ownerIdentityId: ownerIdentityId,
+                    sharedWithIdentityId: identityId,
+                },
+            })
+        );
+
+        console.log("Shared access check:", sharedAccess);
+        return !!sharedAccess.Item;
+    } catch (error) {
+        console.error("Error checking library access:", error);
+        return false;
+    }
 }
