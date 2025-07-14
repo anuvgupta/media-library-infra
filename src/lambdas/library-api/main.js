@@ -103,6 +103,14 @@ exports.handler = async (event) => {
                         requestOrigin
                     );
                 }
+            case "/libraries/{ownerIdentityId}/refresh":
+                if (httpMethod === "POST") {
+                    return await refreshLibraryIndex(
+                        pathParameters.ownerIdentityId,
+                        identityId,
+                        requestOrigin
+                    );
+                }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/subtitles":
                 if (httpMethod === "GET") {
                     return await getMovieSubtitles(
@@ -548,6 +556,87 @@ async function getMoviePlaylist(
         }
         console.error("Error getting playlist:", error);
         throw error;
+    }
+}
+
+// Refresh library index
+async function refreshLibraryIndex(
+    ownerIdentityId,
+    requestingIdentityId,
+    requestOrigin
+) {
+    try {
+        console.log(
+            "Refreshing library index for owner:",
+            ownerIdentityId,
+            "requested by:",
+            requestingIdentityId
+        );
+
+        // Validate requesting user owns the library
+        if (ownerIdentityId !== requestingIdentityId) {
+            return createResponse(
+                403,
+                {
+                    error: "You can only refresh your own library index",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        // Check if library exists
+        const library = await dynamodb.send(
+            new GetCommand({
+                TableName: LIBRARY_ACCESS_TABLE,
+                Key: { ownerIdentityId },
+            })
+        );
+
+        if (!library.Item) {
+            return createResponse(
+                404,
+                { error: "Library not found" },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        // Send SQS message for library refresh
+        const message = {
+            command: "refresh-library",
+            identityId: ownerIdentityId,
+        };
+
+        const sqsParams = {
+            QueueUrl: SQS_QUEUE_URL,
+            MessageBody: JSON.stringify(message),
+        };
+
+        await sqs.send(new SendMessageCommand(sqsParams));
+
+        console.log("Library refresh request sent to SQS queue");
+
+        return createResponse(
+            200,
+            {
+                message: "Library refresh request submitted successfully",
+                ownerIdentityId: ownerIdentityId,
+            },
+            "application/json",
+            requestOrigin
+        );
+    } catch (error) {
+        console.error("Error refreshing library index:", error);
+        return createResponse(
+            500,
+            {
+                error: "Internal server error",
+                details: error.message,
+            },
+            "application/json",
+            requestOrigin
+        );
     }
 }
 

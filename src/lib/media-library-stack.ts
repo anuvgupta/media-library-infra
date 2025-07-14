@@ -854,6 +854,14 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
+        // POST /libraries/{ownerIdentityId}/refresh - Refresh library index
+        const refreshResource = ownerLibraryResource.addResource("refresh");
+        refreshResource.addMethod("POST", libraryApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.IAM,
+            requestParameters: {
+                "method.request.path.ownerIdentityId": true,
+            },
+        });
         // GET /libraries/{ownerIdentityId}/movies/{movieId}/subtitles - Get movie subtitles
         const moviesResource = ownerLibraryResource.addResource("movies");
         const movieResource = moviesResource.addResource("{movieId}");
@@ -1199,6 +1207,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries"),
                     getApiResource("GET", "libraries/*/library"),
                     getApiResource("OPTIONS", "libraries/*/library"),
+                    getApiResource("POST", "libraries/*/refresh"),
+                    getApiResource("OPTIONS", "libraries/*/refresh"),
                     getApiResource("GET", "libraries/*/movies/*/subtitles"),
                     getApiResource("OPTIONS", "libraries/*/movies/*/subtitles"),
                     getApiResource("GET", "libraries/*/movies/*/playlist"),
