@@ -41,6 +41,8 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     stageName: string;
     domainName: string;
     apiDomainName: string;
+    secondaryDomainName?: string;
+    secondaryApiDomainName?: string;
     awsLibraryBucketPrefix: string;
     awsMediaBucketPrefix: string;
     awsPlaylistBucketPrefix: string;
@@ -61,13 +63,22 @@ export class MediaLibraryStack extends cdk.Stack {
         /* CONSTANTS */
         const allowedOriginsDev = [
             `https://${props.domainName}`,
+            ...(props.secondaryDomainName
+                ? [`https://${props.secondaryDomainName}`]
+                : []),
+
             "http://localhost:3000",
             "http://localhost:8080",
             "https://localhost:3000",
             "https://localhost:8080",
             "https://localhost:8443",
         ];
-        const allowedOriginsProd = [`https://${props.domainName}`];
+        const allowedOriginsProd = [
+            `https://${props.domainName}`,
+            ...(props.secondaryDomainName
+                ? [`https://${props.secondaryDomainName}`]
+                : []),
+        ];
         const allowedOrigins =
             props.stageName === "dev" ? allowedOriginsDev : allowedOriginsProd;
         const allowedOrigin = allowedOrigins[0];
@@ -76,10 +87,17 @@ export class MediaLibraryStack extends cdk.Stack {
         // Create SSL certificate for the domain
         const websiteCertificate = new acm.Certificate(this, "Certificate", {
             domainName: props.domainName,
+            subjectAlternativeNames: props.secondaryDomainName
+                ? [props.secondaryDomainName]
+                : undefined,
             validation: acm.CertificateValidation.fromDns(),
         });
+
         const apiCertificate = new acm.Certificate(this, "ApiCertificate", {
             domainName: props.apiDomainName,
+            subjectAlternativeNames: props.secondaryApiDomainName
+                ? [props.secondaryApiDomainName]
+                : undefined,
             validation: acm.CertificateValidation.fromDns(),
         });
 
@@ -474,7 +492,13 @@ export class MediaLibraryStack extends cdk.Stack {
                     props.stageName === "dev"
                         ? cloudfront.PriceClass.PRICE_CLASS_100
                         : cloudfront.PriceClass.PRICE_CLASS_ALL,
-                domainNames: [props.domainName],
+                domainNames: [
+                    props.domainName,
+                    ...(props.secondaryDomainName
+                        ? [props.secondaryDomainName]
+                        : []),
+                ],
+                certificate: websiteCertificate,
                 certificate: websiteCertificate,
                 defaultRootObject: "index.html",
                 errorResponses: [
@@ -566,8 +590,18 @@ export class MediaLibraryStack extends cdk.Stack {
                         cognito.OAuthScope.EMAIL,
                         cognito.OAuthScope.PROFILE,
                     ],
-                    callbackUrls: [allowedOrigin],
-                    logoutUrls: [allowedOrigin],
+                    callbackUrls: [
+                        allowedOrigin,
+                        ...(props.secondaryDomainName
+                            ? [`https://${props.secondaryDomainName}`]
+                            : []),
+                    ],
+                    logoutUrls: [
+                        allowedOrigin,
+                        ...(props.secondaryDomainName
+                            ? [`https://${props.secondaryDomainName}`]
+                            : []),
+                    ],
                 },
             }
         );
@@ -984,6 +1018,26 @@ export class MediaLibraryStack extends cdk.Stack {
             stage: api.deploymentStage,
             domainName: apiCustomDomain,
         });
+        // Add secondary API domain if provided
+        let secondaryApiCustomDomain: apigateway.DomainName | undefined;
+        if (props.secondaryApiDomainName) {
+            secondaryApiCustomDomain = new apigateway.DomainName(
+                this,
+                "SecondaryCustomDomainName",
+                {
+                    domainName: props.secondaryApiDomainName,
+                    certificate: apiCertificate,
+                    endpointType: apigateway.EndpointType.REGIONAL,
+                    securityPolicy: apigateway.SecurityPolicy.TLS_1_2,
+                }
+            );
+
+            new apigateway.BasePathMapping(this, "SecondaryApiMapping", {
+                restApi: api,
+                stage: api.deploymentStage,
+                domainName: secondaryApiCustomDomain,
+            });
+        }
 
         /* API GATEWAY - THROTTLING */
         // const apiLimits = calculateTPS(props.throttlingConfig);
@@ -1266,6 +1320,20 @@ export class MediaLibraryStack extends cdk.Stack {
             description:
                 "API Gateway Domain CNAME record to add in external DNS provider ie. Namecheap, GoDaddy, Yandex",
         });
+        if (props.secondaryDomainName) {
+            new cdk.CfnOutput(this, "SecondaryCloudFrontDomainSetup", {
+                value: `DNS Record:\nDomain: ${props.secondaryDomainName}\nType: CNAME\nTarget: ${distribution.distributionDomainName}`,
+                description:
+                    "Secondary CloudFront Domain CNAME record to add in external DNS provider",
+            });
+        }
+        if (props.secondaryApiDomainName && secondaryApiCustomDomain) {
+            new cdk.CfnOutput(this, "SecondaryApiDomainSetup", {
+                value: `DNS Record:\nDomain: ${props.secondaryApiDomainName}\nType: CNAME\nTarget: ${secondaryApiCustomDomain.domainNameAliasDomainName}`,
+                description:
+                    "Secondary API Gateway Domain CNAME record to add in external DNS provider",
+            });
+        }
         new cdk.CfnOutput(this, "CloudFrontDistributionId", {
             value: distribution.distributionId,
             description: "CloudFront Distribution ID",
