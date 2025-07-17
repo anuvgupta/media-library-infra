@@ -499,7 +499,6 @@ export class MediaLibraryStack extends cdk.Stack {
                         : []),
                 ],
                 certificate: websiteCertificate,
-                certificate: websiteCertificate,
                 defaultRootObject: "index.html",
                 errorResponses: [
                     {
