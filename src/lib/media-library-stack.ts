@@ -190,8 +190,8 @@ export class MediaLibraryStack extends cdk.Stack {
             queueName: `media-worker-commands-${props.stageName}`,
             // Messages will be held for 14 days max
             retentionPeriod: cdk.Duration.days(14),
-            // Allow 5 minutes for processing before message becomes visible again
-            visibilityTimeout: cdk.Duration.minutes(5),
+            // Allow 15 minutes for processing before message becomes visible again
+            visibilityTimeout: cdk.Duration.minutes(15),
             // Dead letter queue after 3 failed attempts
             deadLetterQueue: {
                 queue: new sqs.Queue(this, "WorkerCommandDLQ", {
