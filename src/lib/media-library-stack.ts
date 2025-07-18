@@ -1311,7 +1311,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 conditions: {
                     StringLike: {
                         "s3:prefix": [
-                            "media/${cognito-identity.amazonaws.com:sub}/*",
+                            "poster/${cognito-identity.amazonaws.com:sub}/*",
                         ],
                     },
                 },
