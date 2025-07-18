@@ -46,6 +46,7 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     awsLibraryBucketPrefix: string;
     awsMediaBucketPrefix: string;
     awsPlaylistBucketPrefix: string;
+    awsPosterBucketPrefix: string;
     awsWebsiteBucketPrefix: string;
     enableFirewall: boolean;
     tmdbEndpoint: string;
@@ -339,6 +340,30 @@ export class MediaLibraryStack extends cdk.Stack {
             maxAge: 3000,
         });
 
+        /* S3 BUCKETS - POSTER BUCKET */
+        const posterBucket = new s3.Bucket(this, "MediaLibraryPosterBucket", {
+            bucketName: `${props.awsPosterBucketPrefix}-${this.account}-${props.stageName}`,
+            publicReadAccess: false,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            versioned: true,
+            lifecycleRules: [
+                {
+                    id: "CleanupNoncurrentVersions",
+                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                },
+            ],
+        });
+        // Download restriction - CORS origin
+        posterBucket.addCorsRule({
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+            allowedOrigins: allowedOrigins,
+            allowedHeaders: ["*"],
+            exposedHeaders: ["ETag"],
+            maxAge: 3000,
+        });
+
         /* CLOUDFRONT CDN - ORIGINS */
         // CloudFront distribution origins & access identities
         const websiteOAI = new cloudfront.OriginAccessIdentity(
@@ -351,6 +376,17 @@ export class MediaLibraryStack extends cdk.Stack {
         websiteBucket.grantRead(websiteOAI);
         const websiteOrigin = new origins.S3Origin(websiteBucket, {
             originAccessIdentity: websiteOAI,
+        });
+        const posterOAI = new cloudfront.OriginAccessIdentity(
+            this,
+            `PosterBucketOAI`,
+            {
+                comment: `OAI for CloudFront -> S3 Bucket ${posterBucket.bucketName}`,
+            }
+        );
+        posterBucket.grantRead(posterOAI);
+        const posterOrigin = new origins.S3Origin(posterBucket, {
+            originAccessIdentity: posterOAI,
         });
 
         /* CLOUDFRONT CDN - URL REWRITES & DEV ENV ACCESS */
@@ -487,7 +523,22 @@ export class MediaLibraryStack extends cdk.Stack {
                         },
                     ],
                 },
-                // additionalBehaviors: {},
+                additionalBehaviors: {
+                    "/poster/*": {
+                        origin: posterOrigin,
+                        viewerProtocolPolicy:
+                            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                        allowedMethods:
+                            cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+                        originRequestPolicy:
+                            cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
+                        responseHeadersPolicy:
+                            cloudfront.ResponseHeadersPolicy
+                                .CORS_ALLOW_ALL_ORIGINS,
+                        cachePolicy: cdnCachePolicy,
+                    },
+                },
                 priceClass:
                     props.stageName === "dev"
                         ? cloudfront.PriceClass.PRICE_CLASS_100
@@ -648,6 +699,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     LIBRARY_BUCKET_NAME: libraryBucket.bucketName,
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
                     MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+                    POSTER_BUCKET_NAME: posterBucket.bucketName,
                     MOVIE_UPLOAD_STATUS_TABLE_NAME:
                         movieUploadStatusTable.tableName,
                     ALLOWED_ORIGINS: allowedOrigins.join(","),
@@ -713,6 +765,7 @@ export class MediaLibraryStack extends cdk.Stack {
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantReadWrite(libraryApiLambda);
         mediaBucket.grantRead(libraryApiLambda);
+        posterBucket.grantReadWrite(libraryApiLambda);
         workerCommandQueue.grantSendMessages(libraryApiLambda);
         libraryApiLambda.addToRolePolicy(
             new iam.PolicyStatement({
@@ -1211,7 +1264,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject"],
                 resources: [
-                    // Users can access their own media files using Cognito identity ID
+                    // Users can update their own media files using Cognito identity ID
                     `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
@@ -1221,8 +1274,18 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject", "s3:GetObject"],
                 resources: [
-                    // Users can access their own media files using Cognito identity ID
+                    // Users can access & update their own playlist files using Cognito identity ID
                     `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/*`,
+                ],
+            })
+        );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:PutObject"],
+                resources: [
+                    // Users can update their own poster files using Cognito identity ID
+                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
@@ -1231,6 +1294,20 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:ListBucket"],
                 resources: [mediaBucket.bucketArn],
+                conditions: {
+                    StringLike: {
+                        "s3:prefix": [
+                            "media/${cognito-identity.amazonaws.com:sub}/*",
+                        ],
+                    },
+                },
+            })
+        );
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ["s3:ListBucket"],
+                resources: [posterBucket.bucketArn],
                 conditions: {
                     StringLike: {
                         "s3:prefix": [
@@ -1393,6 +1470,10 @@ export class MediaLibraryStack extends cdk.Stack {
         new cdk.CfnOutput(this, "PlaylistBucketName", {
             value: playlistBucket.bucketName,
             description: "Bucket name for storing media playlists",
+        });
+        new cdk.CfnOutput(this, "PosterBucketName", {
+            value: posterBucket.bucketName,
+            description: "S3 bucket for storing movie poster artwork",
         });
         new cdk.CfnOutput(this, "WebsiteBucketName", {
             value: websiteBucket.bucketName,
