@@ -1325,6 +1325,20 @@ export class MediaLibraryStack extends cdk.Stack {
                 resources: [workerCommandQueue.queueArn],
             })
         );
+        // Allow cache invalidations (for media source worker)
+        authRole.addToPolicy(
+            new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                    "cloudfront:CreateInvalidation",
+                    // "cloudfront:GetInvalidation", // Optional: to check invalidation status
+                    // "cloudfront:ListInvalidations", // Optional: to list user's invalidations
+                ],
+                resources: [
+                    `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
+                ],
+            })
+        );
         // Grant authenticated users permission to call the API Gateway endpoints
         const getApiResource = (method: string, path: string) =>
             `arn:aws:execute-api:${this.region}:${this.account}:${api.restApiId}/${api.deploymentStage.stageName}/${method}/${path}`;
