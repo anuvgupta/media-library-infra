@@ -356,7 +356,7 @@ async function getMovieSubtitles(
         const listParams = {
             Bucket: MEDIA_BUCKET,
             Prefix: `media/${ownerIdentityId}/movie/${movieId}/subtitles/`,
-            MaxKeys: 50,
+            MaxKeys: 100,
         };
 
         const listResult = await s3.send(new ListObjectsV2Command(listParams));
