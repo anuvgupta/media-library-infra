@@ -16,6 +16,7 @@ import * as cr from "aws-cdk-lib/custom-resources";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
@@ -87,50 +88,58 @@ export class MediaLibraryStack extends cdk.Stack {
         const allowedOrigin = allowedOrigins[0];
 
         /* ROUTE 53 - CUSTOM DOMAIN HOSTED ZONES */
-        const secondaryHostedZone =
-            props.stageName === "dev"
-                ? new route53.HostedZone(this, "SecondaryHostedZone", {
-                      zoneName: props.secondaryDomainNameHostedZone,
-                  })
-                : route53.HostedZone.fromLookup(this, "SecondaryHostedZone", {
-                      domainName: props.secondaryDomainNameHostedZone,
-                  });
+        const primaryHostedZone = route53.HostedZone.fromLookup(
+            this,
+            "PrimaryHostedZone",
+            {
+                domainName: "anuv.me", // Lookup existing hosted zone
+            }
+        );
+        let secondaryHostedZone;
+        if (props.secondaryDomainNameHostedZone) {
+            secondaryHostedZone =
+                props.stageName === "dev"
+                    ? new route53.HostedZone(this, "SecondaryHostedZone", {
+                          zoneName: props.secondaryDomainNameHostedZone,
+                      })
+                    : route53.HostedZone.fromLookup(
+                          this,
+                          "SecondaryHostedZone",
+                          {
+                              domainName: props.secondaryDomainNameHostedZone,
+                          }
+                      );
+        }
 
         /* SSL CERTIFICATES - CUSTOM DOMAINS */
         const websiteCertificate = new acm.Certificate(this, "Certificate", {
-            domainName: props.domainName,
-            validation: acm.CertificateValidation.fromDns(),
+            domainName: props.domainName, // media-dev.anuv.me
+            subjectAlternativeNames: props.secondaryDomainName
+                ? [props.secondaryDomainName] // dev.streamy.sh
+                : undefined,
+            validation: acm.CertificateValidation.fromDnsMultiZone({
+                [props.domainName]: primaryHostedZone, // existing anuv.me zone
+                ...(props.secondaryDomainName && secondaryHostedZone
+                    ? {
+                          [props.secondaryDomainName]: secondaryHostedZone, // new streamy.sh zone
+                      }
+                    : {}),
+            }),
         });
         const apiCertificate = new acm.Certificate(this, "ApiCertificate", {
-            domainName: props.apiDomainName,
-            validation: acm.CertificateValidation.fromDns(),
+            domainName: props.apiDomainName, // media-api-dev.anuv.me
+            subjectAlternativeNames: props.secondaryApiDomainName
+                ? [props.secondaryApiDomainName] // api-dev.streamy.sh
+                : undefined,
+            validation: acm.CertificateValidation.fromDnsMultiZone({
+                [props.apiDomainName]: primaryHostedZone, // existing anuv.me zone
+                ...(props.secondaryApiDomainName && secondaryHostedZone
+                    ? {
+                          [props.secondaryApiDomainName]: secondaryHostedZone, // new streamy.sh zone
+                      }
+                    : {}),
+            }),
         });
-        let websiteSecondaryCertificate;
-        if (props.secondaryDomainName) {
-            websiteSecondaryCertificate = new acm.Certificate(
-                this,
-                "SecondaryCertificate",
-                {
-                    domainName: props.secondaryDomainName,
-                    validation: acm.CertificateValidation.fromDnsMultiZone({
-                        [props.secondaryDomainName]: secondaryHostedZone,
-                    }),
-                }
-            );
-        }
-        let apiSecondaryCertificate;
-        if (props.secondaryApiDomainName) {
-            apiSecondaryCertificate = new acm.Certificate(
-                this,
-                "ApiSecondaryCertificate",
-                {
-                    domainName: props.secondaryApiDomainName,
-                    validation: acm.CertificateValidation.fromDnsMultiZone({
-                        [props.secondaryApiDomainName]: secondaryHostedZoneApi,
-                    }),
-                }
-            );
-        }
 
         /* DYNAMODB TABLES - LIBRARY ACCESS CONTROL */
         // Main table for library ownership and access type
@@ -1101,13 +1110,13 @@ export class MediaLibraryStack extends cdk.Stack {
         });
         // Add secondary API domain if provided
         let secondaryApiCustomDomain: apigateway.DomainName | undefined;
-        if (props.secondaryApiDomainName) {
+        if (props.secondaryApiDomainName && apiCertificate) {
             secondaryApiCustomDomain = new apigateway.DomainName(
                 this,
                 "SecondaryCustomDomainName",
                 {
                     domainName: props.secondaryApiDomainName,
-                    certificate: apiSecondaryCertificate,
+                    certificate: apiCertificate,
                     endpointType: apigateway.EndpointType.REGIONAL,
                     securityPolicy: apigateway.SecurityPolicy.TLS_1_2,
                 }
@@ -1415,40 +1424,44 @@ export class MediaLibraryStack extends cdk.Stack {
         );
 
         /* ROUTE 53 - DNS RECORDS */
-        // Website A records
-        if (props.secondaryDomainName) {
+        // Primary domain records (existing anuv.me zone)
+        new route53.ARecord(this, "PrimaryWebsiteAliasRecord", {
+            zone: primaryHostedZone,
+            recordName: props.domainName, // media-dev.anuv.me or media.anuv.me
+            target: route53.RecordTarget.fromAlias(
+                new targets.CloudFrontTarget(distribution)
+            ),
+        });
+        new route53.ARecord(this, "PrimaryApiAliasRecord", {
+            zone: primaryHostedZone,
+            recordName: props.apiDomainName, // media-api-dev.anuv.me or media-api.anuv.me
+            target: route53.RecordTarget.fromAlias(
+                new targets.ApiGatewayDomain(apiCustomDomain)
+            ),
+        });
+        if (
+            props.secondaryDomainName &&
+            props.secondaryApiDomainName &&
+            secondaryHostedZone &&
+            secondaryApiCustomDomain
+        ) {
             new route53.ARecord(this, "SecondaryWebsiteAliasRecord", {
-                zone: hostedZone,
-                recordName:
-                    props.secondaryDomainName ===
-                    props.secondaryDomainNameHostedZone
-                        ? "@"
-                        : props.secondaryDomainName,
+                zone: secondaryHostedZone,
+                recordName: props.secondaryDomainName, // dev.streamy.sh or streamy.sh
                 target: route53.RecordTarget.fromAlias(
                     new targets.CloudFrontTarget(distribution)
                 ),
             });
-        }
-        // API A records
-        if (props.secondaryApiDomainName && secondaryApiCustomDomain) {
             new route53.ARecord(this, "SecondaryApiAliasRecord", {
-                zone: hostedZone,
-                recordName:
-                    props.secondaryApiDomainName ===
-                    props.secondaryDomainNameHostedZone
-                        ? "@"
-                        : props.secondaryApiDomainName,
+                zone: secondaryHostedZone,
+                recordName: props.secondaryApiDomainName, // api-dev.streamy.sh or api.streamy.sh
                 target: route53.RecordTarget.fromAlias(
-                    new targets.ApiGatewayDomain(secondaryApiCustomDomain)
+                    new targets.ApiGatewayDomain(secondaryApiCustomDomain) // Use same API gateway
                 ),
             });
         }
 
         /* STACK OUTPUTS */
-        new cdk.CfnOutput(this, "NameServers", {
-            value: cdk.Fn.join(", ", hostedZone.hostedZoneNameServers!),
-            description: "Route 53 nameservers for your domain",
-        });
         if (secondaryHostedZone) {
             new cdk.CfnOutput(this, "SecondaryNameServers", {
                 value: cdk.Fn.join(
