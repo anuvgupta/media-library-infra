@@ -44,6 +44,7 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     apiDomainName: string;
     secondaryDomainName?: string;
     secondaryApiDomainName?: string;
+    secondaryDomainNameHostedZone?: string;
     awsLibraryBucketPrefix: string;
     awsMediaBucketPrefix: string;
     awsPlaylistBucketPrefix: string;
@@ -86,50 +87,50 @@ export class MediaLibraryStack extends cdk.Stack {
         const allowedOrigin = allowedOrigins[0];
 
         /* ROUTE 53 - CUSTOM DOMAIN HOSTED ZONES */
-        const hostedZone = new route53.HostedZone(this, "HostedZone", {
-            zoneName: props.domainName,
-        });
-        let secondaryHostedZone: route53.HostedZone | undefined;
-        if (props.secondaryDomainName) {
-            secondaryHostedZone = new route53.HostedZone(
-                this,
-                "SecondaryHostedZone",
-                {
-                    zoneName: props.secondaryDomainName,
-                }
-            );
-        }
+        const secondaryHostedZone =
+            props.stageName === "dev"
+                ? new route53.HostedZone(this, "SecondaryHostedZone", {
+                      zoneName: props.secondaryDomainNameHostedZone,
+                  })
+                : route53.HostedZone.fromLookup(this, "SecondaryHostedZone", {
+                      domainName: props.secondaryDomainNameHostedZone,
+                  });
 
         /* SSL CERTIFICATES - CUSTOM DOMAINS */
-        // Create SSL certificate for the domain
         const websiteCertificate = new acm.Certificate(this, "Certificate", {
             domainName: props.domainName,
-            subjectAlternativeNames: props.secondaryDomainName
-                ? [props.secondaryDomainName]
-                : undefined,
-            validation: acm.CertificateValidation.fromDnsMultiRegion({
-                [props.domainName]: hostedZone,
-                ...(props.secondaryDomainName && secondaryHostedZone
-                    ? {
-                          [props.secondaryDomainName]: secondaryHostedZone,
-                      }
-                    : {}),
-            }),
+            validation: acm.CertificateValidation.fromDns(),
         });
         const apiCertificate = new acm.Certificate(this, "ApiCertificate", {
             domainName: props.apiDomainName,
-            subjectAlternativeNames: props.secondaryApiDomainName
-                ? [props.secondaryApiDomainName]
-                : undefined,
-            validation: acm.CertificateValidation.fromDnsMultiRegion({
-                [props.apiDomainName]: hostedZone,
-                ...(props.secondaryApiDomainName && secondaryHostedZone
-                    ? {
-                          [props.secondaryApiDomainName]: secondaryHostedZone,
-                      }
-                    : {}),
-            }),
+            validation: acm.CertificateValidation.fromDns(),
         });
+        let websiteSecondaryCertificate;
+        if (props.secondaryDomainName) {
+            websiteSecondaryCertificate = new acm.Certificate(
+                this,
+                "SecondaryCertificate",
+                {
+                    domainName: props.secondaryDomainName,
+                    validation: acm.CertificateValidation.fromDnsMultiZone({
+                        [props.secondaryDomainName]: secondaryHostedZone,
+                    }),
+                }
+            );
+        }
+        let apiSecondaryCertificate;
+        if (props.secondaryApiDomainName) {
+            apiSecondaryCertificate = new acm.Certificate(
+                this,
+                "ApiSecondaryCertificate",
+                {
+                    domainName: props.secondaryApiDomainName,
+                    validation: acm.CertificateValidation.fromDnsMultiZone({
+                        [props.secondaryApiDomainName]: secondaryHostedZoneApi,
+                    }),
+                }
+            );
+        }
 
         /* DYNAMODB TABLES - LIBRARY ACCESS CONTROL */
         // Main table for library ownership and access type
@@ -1106,7 +1107,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 "SecondaryCustomDomainName",
                 {
                     domainName: props.secondaryApiDomainName,
-                    certificate: apiCertificate,
+                    certificate: apiSecondaryCertificate,
                     endpointType: apigateway.EndpointType.REGIONAL,
                     securityPolicy: apigateway.SecurityPolicy.TLS_1_2,
                 }
@@ -1414,49 +1415,46 @@ export class MediaLibraryStack extends cdk.Stack {
         );
 
         /* ROUTE 53 - DNS RECORDS */
-        // Website CNAME records
-        new route53.CnameRecord(this, "WebsiteCnameRecord", {
-            zone: hostedZone,
-            recordName: props.domainName,
-            domainName: distribution.distributionDomainName,
-        });
-        if (props.secondaryDomainName && secondaryHostedZone) {
-            new route53.CnameRecord(this, "SecondaryWebsiteCnameRecord", {
-                zone: secondaryHostedZone,
-                recordName: props.secondaryDomainName,
-                domainName: distribution.distributionDomainName,
+        // Website A records
+        if (props.secondaryDomainName) {
+            new route53.ARecord(this, "SecondaryWebsiteAliasRecord", {
+                zone: hostedZone,
+                recordName:
+                    props.secondaryDomainName ===
+                    props.secondaryDomainNameHostedZone
+                        ? "@"
+                        : props.secondaryDomainName,
+                target: route53.RecordTarget.fromAlias(
+                    new targets.CloudFrontTarget(distribution)
+                ),
             });
         }
-        // API CNAME records
-        new route53.CnameRecord(this, "ApiCnameRecord", {
-            zone: hostedZone,
-            recordName: props.apiDomainName,
-            domainName: apiCustomDomain.domainNameAliasDomainName,
-        });
-        if (
-            props.secondaryApiDomainName &&
-            secondaryApiCustomDomain &&
-            secondaryHostedZone
-        ) {
-            new route53.CnameRecord(this, "SecondaryApiCnameRecord", {
-                zone: secondaryHostedZone,
-                recordName: props.secondaryApiDomainName,
-                domainName: secondaryApiCustomDomain.domainNameAliasDomainName,
+        // API A records
+        if (props.secondaryApiDomainName && secondaryApiCustomDomain) {
+            new route53.ARecord(this, "SecondaryApiAliasRecord", {
+                zone: hostedZone,
+                recordName:
+                    props.secondaryApiDomainName ===
+                    props.secondaryDomainNameHostedZone
+                        ? "@"
+                        : props.secondaryApiDomainName,
+                target: route53.RecordTarget.fromAlias(
+                    new targets.ApiGatewayDomain(secondaryApiCustomDomain)
+                ),
             });
         }
 
         /* STACK OUTPUTS */
         new cdk.CfnOutput(this, "NameServers", {
-            value:
-                hostedZone.hostedZoneNameServers?.join(", ") || "Not available",
+            value: cdk.Fn.join(", ", hostedZone.hostedZoneNameServers!),
             description: "Route 53 nameservers for your domain",
         });
-
         if (secondaryHostedZone) {
             new cdk.CfnOutput(this, "SecondaryNameServers", {
-                value:
-                    secondaryHostedZone.hostedZoneNameServers?.join(", ") ||
-                    "Not available",
+                value: cdk.Fn.join(
+                    ", ",
+                    secondaryHostedZone.hostedZoneNameServers!
+                ),
                 description: "Route 53 nameservers for your secondary domain",
             });
         }

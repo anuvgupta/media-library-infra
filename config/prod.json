@@ -3,6 +3,7 @@
     "apiDomainName": "media-api.anuv.me",
     "secondaryDomainName": "streamy.sh",
     "secondaryApiDomainName": "api.streamy.sh",
+    "secondaryDomainNameHostedZone": "streamy.sh",
     "tmdbEndpoint": "https://api.themoviedb.org",
     "stackNamePrefix": "media-library",
     "awsAccountId": "738123590383",
