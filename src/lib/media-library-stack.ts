@@ -1462,15 +1462,15 @@ export class MediaLibraryStack extends cdk.Stack {
         }
 
         /* STACK OUTPUTS */
-        if (secondaryHostedZone) {
-            new cdk.CfnOutput(this, "SecondaryNameServers", {
-                value: cdk.Fn.join(
-                    ", ",
-                    secondaryHostedZone.hostedZoneNameServers!
-                ),
-                description: "Route 53 nameservers for your secondary domain",
-            });
-        }
+        // if (secondaryHostedZone) {
+        //     new cdk.CfnOutput(this, "SecondaryNameServers", {
+        //         value: cdk.Fn.join(
+        //             ", ",
+        //             secondaryHostedZone.hostedZoneNameServers!
+        //         ),
+        //         description: "Route 53 nameservers for your secondary domain",
+        //     });
+        // }
         new cdk.CfnOutput(this, "CloudFrontDistributionId", {
             value: distribution.distributionId,
             description: "CloudFront Distribution ID",
