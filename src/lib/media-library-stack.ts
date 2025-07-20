@@ -8,6 +8,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as cognito from "aws-cdk-lib/aws-cognito";
@@ -61,7 +62,7 @@ export class MediaLibraryStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: MediaLibraryStackProps) {
         super(scope, id, props);
 
-        /* CONSTANTS */
+        /* CONSTANTS - CORS ORIGINS */
         const allowedOriginsDev = [
             `https://${props.domainName}`,
             ...(props.secondaryDomainName
@@ -84,6 +85,21 @@ export class MediaLibraryStack extends cdk.Stack {
             props.stageName === "dev" ? allowedOriginsDev : allowedOriginsProd;
         const allowedOrigin = allowedOrigins[0];
 
+        /* ROUTE 53 - CUSTOM DOMAIN HOSTED ZONES */
+        const hostedZone = new route53.HostedZone(this, "HostedZone", {
+            zoneName: props.domainName,
+        });
+        let secondaryHostedZone: route53.HostedZone | undefined;
+        if (props.secondaryDomainName) {
+            secondaryHostedZone = new route53.HostedZone(
+                this,
+                "SecondaryHostedZone",
+                {
+                    zoneName: props.secondaryDomainName,
+                }
+            );
+        }
+
         /* SSL CERTIFICATES - CUSTOM DOMAINS */
         // Create SSL certificate for the domain
         const websiteCertificate = new acm.Certificate(this, "Certificate", {
@@ -91,15 +107,28 @@ export class MediaLibraryStack extends cdk.Stack {
             subjectAlternativeNames: props.secondaryDomainName
                 ? [props.secondaryDomainName]
                 : undefined,
-            validation: acm.CertificateValidation.fromDns(),
+            validation: acm.CertificateValidation.fromDnsMultiRegion({
+                [props.domainName]: hostedZone,
+                ...(props.secondaryDomainName && secondaryHostedZone
+                    ? {
+                          [props.secondaryDomainName]: secondaryHostedZone,
+                      }
+                    : {}),
+            }),
         });
-
         const apiCertificate = new acm.Certificate(this, "ApiCertificate", {
             domainName: props.apiDomainName,
             subjectAlternativeNames: props.secondaryApiDomainName
                 ? [props.secondaryApiDomainName]
                 : undefined,
-            validation: acm.CertificateValidation.fromDns(),
+            validation: acm.CertificateValidation.fromDnsMultiRegion({
+                [props.apiDomainName]: hostedZone,
+                ...(props.secondaryApiDomainName && secondaryHostedZone
+                    ? {
+                          [props.secondaryApiDomainName]: secondaryHostedZone,
+                      }
+                    : {}),
+            }),
         });
 
         /* DYNAMODB TABLES - LIBRARY ACCESS CONTROL */
@@ -1384,43 +1413,51 @@ export class MediaLibraryStack extends cdk.Stack {
             })
         );
 
-        /* STACK OUTPUTS */
-        new cdk.CfnOutput(this, "CertificateValidationRecords", {
-            value:
-                "IMPORTANT!! Check Certificate Manager in AWS Console for DNS validation records to add to external DNS provider ie. Namecheap, GoDaddy, Yandex. " +
-                "Initial stack deployment won't complete until the DNS is updated & propagates (which takes a while).",
-            description:
-                "DNS records needed for website SSL certificate validation",
+        /* ROUTE 53 - DNS RECORDS */
+        // Website CNAME records
+        new route53.CnameRecord(this, "WebsiteCnameRecord", {
+            zone: hostedZone,
+            recordName: props.domainName,
+            domainName: distribution.distributionDomainName,
         });
-        new cdk.CfnOutput(this, "ApiCertificateValidationRecords", {
-            value:
-                "IMPORTANT!! Check Certificate Manager in AWS Console for DNS validation records to add to external DNS provider ie. Namecheap, GoDaddy, Yandex. " +
-                "Initial stack deployment won't complete until the DNS is updated & propagates (which takes a while).",
-            description:
-                "DNS records needed for API SSL certificate validation",
-        });
-        new cdk.CfnOutput(this, "CloudFrontDomainSetup", {
-            value: `DNS Record:\nDomain: ${props.domainName}\nType: CNAME\nTarget: ${distribution.distributionDomainName}`,
-            description:
-                "CloudFront Domain CNAME record to add in external DNS provider ie. Namecheap, GoDaddy, Yandex",
-        });
-        new cdk.CfnOutput(this, "ApiDomainSetup", {
-            value: `DNS Record:\nDomain: ${props.apiDomainName}\nType: CNAME\nTarget: ${apiCustomDomain.domainNameAliasDomainName}`,
-            description:
-                "API Gateway Domain CNAME record to add in external DNS provider ie. Namecheap, GoDaddy, Yandex",
-        });
-        if (props.secondaryDomainName) {
-            new cdk.CfnOutput(this, "SecondaryCloudFrontDomainSetup", {
-                value: `DNS Record:\nDomain: ${props.secondaryDomainName}\nType: CNAME\nTarget: ${distribution.distributionDomainName}`,
-                description:
-                    "Secondary CloudFront Domain CNAME record to add in external DNS provider",
+        if (props.secondaryDomainName && secondaryHostedZone) {
+            new route53.CnameRecord(this, "SecondaryWebsiteCnameRecord", {
+                zone: secondaryHostedZone,
+                recordName: props.secondaryDomainName,
+                domainName: distribution.distributionDomainName,
             });
         }
-        if (props.secondaryApiDomainName && secondaryApiCustomDomain) {
-            new cdk.CfnOutput(this, "SecondaryApiDomainSetup", {
-                value: `DNS Record:\nDomain: ${props.secondaryApiDomainName}\nType: CNAME\nTarget: ${secondaryApiCustomDomain.domainNameAliasDomainName}`,
-                description:
-                    "Secondary API Gateway Domain CNAME record to add in external DNS provider",
+        // API CNAME records
+        new route53.CnameRecord(this, "ApiCnameRecord", {
+            zone: hostedZone,
+            recordName: props.apiDomainName,
+            domainName: apiCustomDomain.domainNameAliasDomainName,
+        });
+        if (
+            props.secondaryApiDomainName &&
+            secondaryApiCustomDomain &&
+            secondaryHostedZone
+        ) {
+            new route53.CnameRecord(this, "SecondaryApiCnameRecord", {
+                zone: secondaryHostedZone,
+                recordName: props.secondaryApiDomainName,
+                domainName: secondaryApiCustomDomain.domainNameAliasDomainName,
+            });
+        }
+
+        /* STACK OUTPUTS */
+        new cdk.CfnOutput(this, "NameServers", {
+            value:
+                hostedZone.hostedZoneNameServers?.join(", ") || "Not available",
+            description: "Route 53 nameservers for your domain",
+        });
+
+        if (secondaryHostedZone) {
+            new cdk.CfnOutput(this, "SecondaryNameServers", {
+                value:
+                    secondaryHostedZone.hostedZoneNameServers?.join(", ") ||
+                    "Not available",
+                description: "Route 53 nameservers for your secondary domain",
             });
         }
         new cdk.CfnOutput(this, "CloudFrontDistributionId", {
@@ -1492,14 +1529,6 @@ export class MediaLibraryStack extends cdk.Stack {
             value: websiteBucket.bucketName,
             description: "Bucket name for website files",
         });
-        // new cdk.CfnOutput(this, "MaxConcurrentUsers", {
-        //     value: `${apiLimits.details.metrics.maxSupportedUsers} users / sec`,
-        //     description: `Maximum concurrent users per second supported, calculated from maxWorkers=${apiLimits.inputs.maxWorkers}, generationTimeSeconds=${apiLimits.inputs.generationTimeSeconds}, statusPollIntervalSeconds=${apiLimits.inputs.statusPollIntervalSeconds}, imagesPerSession=${apiLimits.inputs.imagesPerSession}, averageThinkTimeSeconds=${apiLimits.inputs.averageThinkTimeSeconds}`,
-        // });
-        // new cdk.CfnOutput(this, "TPSLimits", {
-        //     value: `runTPS=${apiLimits.limits.runTPS}tps, runTPSBurst=${apiLimits.limits.runTPSBurst}tps, ipRunLimit=${apiLimits.limits.ipRunLimit} runs per ${apiLimits.inputs.ipLimitWindowMinutes}min, statusTPS=${apiLimits.limits.statusTPS}tps, statusTPSBurst=${apiLimits.limits.statusTPSBurst}tps, ipStatusLimit=${apiLimits.limits.ipStatusLimit} status checks per ${apiLimits.inputs.ipLimitWindowMinutes}min`,
-        //     description: `TPS limits, calculated from maxWorkers=${apiLimits.inputs.maxWorkers}, generationTimeSeconds=${apiLimits.inputs.generationTimeSeconds}, statusPollIntervalSeconds=${apiLimits.inputs.statusPollIntervalSeconds}, imagesPerSession=${apiLimits.inputs.imagesPerSession}, averageThinkTimeSeconds=${apiLimits.inputs.averageThinkTimeSeconds}`,
-        // });
         new cdk.CfnOutput(this, "WorkerCommandQueueUrl", {
             value: workerCommandQueue.queueUrl,
             description: "SQS Queue URL for worker commands",
