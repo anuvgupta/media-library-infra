@@ -218,8 +218,9 @@ export class MediaLibraryStack extends cdk.Stack {
             versioned: true,
             lifecycleRules: [
                 {
+                    // Remove backups (older versions of files that have been replaced by subsequent uploads) after 4 days
                     id: "CleanupNoncurrentVersions",
-                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                    noncurrentVersionExpiration: cdk.Duration.days(4),
                 },
             ],
         });
@@ -235,8 +236,9 @@ export class MediaLibraryStack extends cdk.Stack {
             versioned: true,
             lifecycleRules: [
                 {
+                    // Remove backups (older versions of files that have been replaced by subsequent uploads) after 4 days
                     id: "CleanupNoncurrentVersions",
-                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                    noncurrentVersionExpiration: cdk.Duration.days(4),
                 },
             ],
         });
@@ -262,14 +264,13 @@ export class MediaLibraryStack extends cdk.Stack {
             lifecycleRules: [
                 {
                     // Create strict bucket TTL policy
-                    // Minimum is 4 days
-                    // No need to store cached media for more than 4 days
-                    expiration: cdk.Duration.days(4),
-                    id: "DeleteAfterFourDays",
+                    // Cache media in cloud for 14 days
+                    expiration: cdk.Duration.days(14),
+                    id: "DeleteAfterFourteenDays",
                     // Ensure noncurrent versions are also deleted
                     noncurrentVersionExpiration: cdk.Duration.days(4),
                     // Cleanup incomplete multipart uploads
-                    abortIncompleteMultipartUploadAfter: cdk.Duration.days(4),
+                    abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
                 },
                 {
                     // Separate rule for expired object delete markers
@@ -307,16 +308,14 @@ export class MediaLibraryStack extends cdk.Stack {
                 lifecycleRules: [
                     {
                         // Create strict bucket TTL policy
-                        // Minimum is 3 days
-                        // No need to store cached playlists for more than 3 days
-                        // Needs to be less than media cache TTL (4 days) to avoid playlist fragLoadError networkErrors which are currently unhandled on frontend
-                        expiration: cdk.Duration.days(3),
-                        id: "DeleteAfterThreeDays",
+                        // Cache media in cloud for 14 days
+                        expiration: cdk.Duration.days(14),
+                        id: "DeleteAfterFourteenDays",
                         // Ensure noncurrent versions are also deleted
-                        noncurrentVersionExpiration: cdk.Duration.days(3),
+                        noncurrentVersionExpiration: cdk.Duration.days(4),
                         // Cleanup incomplete multipart uploads
                         abortIncompleteMultipartUploadAfter:
-                            cdk.Duration.days(3),
+                            cdk.Duration.days(1),
                     },
                     {
                         // Separate rule for expired object delete markers
@@ -351,7 +350,7 @@ export class MediaLibraryStack extends cdk.Stack {
             lifecycleRules: [
                 {
                     id: "CleanupNoncurrentVersions",
-                    noncurrentVersionExpiration: cdk.Duration.days(30),
+                    noncurrentVersionExpiration: cdk.Duration.days(4),
                 },
             ],
         });
