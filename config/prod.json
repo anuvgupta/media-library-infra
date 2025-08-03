@@ -1,4 +1,5 @@
 {
+    "primaryHostedZone": "anuv.me",
     "domainName": "media.anuv.me",
     "apiDomainName": "media-api.anuv.me",
     "secondaryDomainName": "streamy.sh",

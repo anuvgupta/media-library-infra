@@ -92,7 +92,7 @@ export class MediaLibraryStack extends cdk.Stack {
             this,
             "PrimaryHostedZone",
             {
-                domainName: "anuv.me", // Lookup existing hosted zone
+                domainName: props.primaryHostedZone, // Lookup existing hosted zone
             }
         );
         let secondaryHostedZone;
