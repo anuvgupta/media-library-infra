@@ -46,6 +46,7 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     secondaryDomainName?: string;
     secondaryApiDomainName?: string;
     secondaryDomainNameHostedZone?: string;
+    primaryHostedZone: string;
     awsLibraryBucketPrefix: string;
     awsMediaBucketPrefix: string;
     awsPlaylistBucketPrefix: string;
