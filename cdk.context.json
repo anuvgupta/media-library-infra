@@ -2,5 +2,9 @@
   "hosted-zone:account=738123590383:domainName=anuv.me:region=us-east-1": {
     "Id": "/hostedzone/Z06016413JEYPWXOLWANC",
     "Name": "anuv.me."
+  },
+  "hosted-zone:account=738123590383:domainName=streamy.sh:region=us-east-1": {
+    "Id": "/hostedzone/Z0083918GSYMMQJBF02V",
+    "Name": "streamy.sh."
   }
 }
