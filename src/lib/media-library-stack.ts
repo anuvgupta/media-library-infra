@@ -304,9 +304,9 @@ export class MediaLibraryStack extends cdk.Stack {
             lifecycleRules: [
                 {
                     // Create strict bucket TTL policy
-                    // Cache media in cloud for 14 days
-                    expiration: cdk.Duration.days(14),
-                    id: "DeleteAfterFourteenDays",
+                    // Cache media in cloud for 100 days
+                    expiration: cdk.Duration.days(100),
+                    id: "DeleteAfterHundredDays",
                     // Ensure noncurrent versions are also deleted
                     noncurrentVersionExpiration: cdk.Duration.days(4),
                     // Cleanup incomplete multipart uploads
@@ -348,9 +348,9 @@ export class MediaLibraryStack extends cdk.Stack {
                 lifecycleRules: [
                     {
                         // Create strict bucket TTL policy
-                        // Cache media in cloud for 14 days
-                        expiration: cdk.Duration.days(14),
-                        id: "DeleteAfterFourteenDays",
+                        // Cache playlist in cloud for 100 days
+                        expiration: cdk.Duration.days(100),
+                        id: "DeleteAfterHundredDays",
                         // Ensure noncurrent versions are also deleted
                         noncurrentVersionExpiration: cdk.Duration.days(4),
                         // Cleanup incomplete multipart uploads
@@ -530,9 +530,9 @@ export class MediaLibraryStack extends cdk.Stack {
             "MediaLibraryCDNCachePolicy",
             {
                 comment: "Policy for media library CDN content caching",
-                defaultTtl: cdk.Duration.hours(6),
-                minTtl: cdk.Duration.hours(6),
-                maxTtl: cdk.Duration.hours(6),
+                defaultTtl: cdk.Duration.hours(12),
+                minTtl: cdk.Duration.hours(12),
+                maxTtl: cdk.Duration.hours(12),
                 enableAcceptEncodingGzip: true,
                 enableAcceptEncodingBrotli: true,
             }
@@ -1080,7 +1080,7 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /metadata - Create or update library access record
+        // GET /metadata - Get movie metadata from TMDB
         const metadataResource = api.root.addResource("metadata");
         metadataResource.addMethod("GET", tmdbSearchMovieApiIntegration, {
             authorizationType: apigateway.AuthorizationType.NONE,
