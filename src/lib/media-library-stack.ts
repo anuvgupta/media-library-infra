@@ -962,6 +962,21 @@ export class MediaLibraryStack extends cdk.Stack {
                 },
             }
         );
+        const tmdbSearchTvApiIntegration = new apigateway.HttpIntegration(
+            `${props.tmdbEndpoint}/3/search/tv`,
+            {
+                httpMethod: "GET",
+                options: {
+                    requestParameters: {
+                        "integration.request.header.Authorization": `'Bearer ${props.tmdbAccessToken}'`,
+                        "integration.request.querystring.query":
+                            "method.request.querystring.query",
+                        "integration.request.querystring.year":
+                            "method.request.querystring.year",
+                    },
+                },
+            }
+        );
 
         /* API GATEWAY - REQUEST HANDLERS */
         // GET /libraries - Get user's accessible libraries
@@ -1083,6 +1098,16 @@ export class MediaLibraryStack extends cdk.Stack {
         // GET /metadata - Get movie metadata from TMDB
         const metadataResource = api.root.addResource("metadata");
         metadataResource.addMethod("GET", tmdbSearchMovieApiIntegration, {
+            authorizationType: apigateway.AuthorizationType.NONE,
+            requestParameters: {
+                // Declare expected query parameters
+                "method.request.querystring.query": false,
+                "method.request.querystring.year": false,
+            },
+        });
+        // GET /metadata/tv - Get tv metadata from TMDB
+        const metadataTvResource = metadataResource.addResource("tv");
+        metadataTvResource.addMethod("GET", tmdbSearchTvApiIntegration, {
             authorizationType: apigateway.AuthorizationType.NONE,
             requestParameters: {
                 // Declare expected query parameters
@@ -1420,6 +1445,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/access"),
                     getApiResource("GET", "metadata"),
                     getApiResource("OPTIONS", "metadata"),
+                    getApiResource("GET", "metadata/tv"),
+                    getApiResource("OPTIONS", "metadata/tv"),
                 ],
             })
         );
