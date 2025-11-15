@@ -1213,7 +1213,7 @@ async function processPlaylistTemplate(
                 return createResponse(
                     404,
                     {
-                        error: "Template playlist not found",
+                        error: `Template playlist not found for key ${templateKey}`,
                     },
                     "application/json",
                     requestOrigin
