@@ -1023,7 +1023,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.type": false, // Add query parameter for mediaType
+                "method.request.querystring.mediaType": false,
             },
         });
         // GET /libraries/{ownerIdentityId}/media/{mediaId}/playlist
@@ -1033,7 +1033,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.type": false,
+                "method.request.querystring.mediaType": false,
             },
         });
         // POST /libraries/{ownerIdentityId}/media/{mediaId}/playlist/process
@@ -1043,6 +1043,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
+                "method.request.querystring.mediaType": false,
             },
         });
         // POST /libraries/{ownerIdentityId}/media/{mediaId}/request
@@ -1052,6 +1053,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
+                "method.request.querystring.mediaType": false,
             },
         });
         // GET/POST /libraries/{ownerIdentityId}/media/{mediaId}/status
@@ -1061,6 +1063,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
+                "method.request.querystring.mediaType": false,
             },
         });
         statusResource.addMethod("POST", libraryApiIntegration, {
@@ -1068,6 +1071,7 @@ export class MediaLibraryStack extends cdk.Stack {
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
                 "method.request.path.mediaId": true,
+                "method.request.querystring.mediaType": false,
             },
         });
         // POST /libraries/{ownerIdentityId}/share - Share library with another user

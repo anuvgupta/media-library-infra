@@ -114,7 +114,7 @@ exports.handler = async (event) => {
             case "/libraries/{ownerIdentityId}/media/{mediaId}/subtitles":
                 if (httpMethod === "GET") {
                     const subtitlesMediaType =
-                        event.queryStringParameters?.type || "movie";
+                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaSubtitles(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
@@ -126,7 +126,7 @@ exports.handler = async (event) => {
             case "/libraries/{ownerIdentityId}/media/{mediaId}/playlist":
                 if (httpMethod === "GET") {
                     const playlistMediaType =
-                        event.queryStringParameters?.type || "movie";
+                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaPlaylist(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
@@ -150,19 +150,25 @@ exports.handler = async (event) => {
                 }
             case "/libraries/{ownerIdentityId}/media/{mediaId}/request":
                 if (httpMethod === "POST") {
+                    const requestMediaType =
+                        event.queryStringParameters?.mediaType || "movie";
                     return await requestMedia(
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
+                        requestMediaType,
                         identityId,
                         requestOrigin
                     );
                 }
             case "/libraries/{ownerIdentityId}/media/{mediaId}/status":
                 if (httpMethod === "GET") {
+                    const statusMediaType =
+                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaUploadStatus(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
+                        statusMediaType,
                         identityId,
                         requestOrigin
                     );
@@ -1507,13 +1513,11 @@ async function requestMedia(
     body,
     ownerIdentityId,
     mediaId,
+    mediaType,
     requestingIdentityId,
     requestOrigin
 ) {
     try {
-        const requestData = JSON.parse(body);
-        const { mediaType } = requestData;
-
         // Validate mediaType
         if (!mediaType || !["movie", "episode"].includes(mediaType)) {
             return createResponse(
@@ -1716,6 +1720,7 @@ async function updateMediaUploadStatus(
 async function getMediaUploadStatus(
     ownerIdentityId,
     mediaId,
+    mediaType,
     identityId,
     requestOrigin
 ) {
@@ -1725,6 +1730,8 @@ async function getMediaUploadStatus(
             ownerIdentityId,
             "media:",
             mediaId,
+            "type:",
+            mediaType,
             "requested by:",
             identityId
         );
@@ -1758,6 +1765,18 @@ async function getMediaUploadStatus(
                 404,
                 {
                     error: "Upload status not found",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
+        // Validate mediaType matches if you want to be strict
+        if (result.Item.mediaType !== mediaType) {
+            return createResponse(
+                400,
+                {
+                    error: `Media type mismatch: expected ${mediaType}, found ${result.Item.mediaType}`,
                 },
                 "application/json",
                 requestOrigin
