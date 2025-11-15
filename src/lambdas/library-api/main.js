@@ -475,7 +475,7 @@ async function getMediaPlaylist(
                 return createResponse(
                     404,
                     {
-                        error: "Media not found or not yet processed",
+                        error: `Media not found or not yet processed for key ${templatePlaylistKey}`,
                     },
                     "application/json",
                     requestOrigin
