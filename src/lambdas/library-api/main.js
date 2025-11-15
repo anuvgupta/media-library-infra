@@ -516,8 +516,8 @@ async function getMediaPlaylist(
         const reprocessResult = await processPlaylistTemplate(
             reprocessBody,
             ownerIdentityId,
-            mediaType,
             mediaId,
+            mediaType,
             ownerIdentityId, // Use owner's identity for processing
             requestOrigin
         );
