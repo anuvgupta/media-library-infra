@@ -1365,8 +1365,8 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject"],
                 resources: [
-                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/media/*/type-movie/*`,
-                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/media/*/type-episode/*`,
+                    // Users can update their own poster files using Cognito identity ID
+                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/*`,
                 ],
             })
         );
