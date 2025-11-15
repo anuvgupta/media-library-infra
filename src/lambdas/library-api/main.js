@@ -30,7 +30,7 @@ const USER_POOL_ID = process.env.USER_POOL_ID;
 const IDENTITY_POOL_ID = process.env.IDENTITY_POOL_ID;
 const LIBRARY_ACCESS_TABLE = process.env.LIBRARY_ACCESS_TABLE_NAME;
 const LIBRARY_SHARED_TABLE = process.env.LIBRARY_SHARED_TABLE_NAME;
-const MOVIE_UPLOAD_STATUS_TABLE = process.env.MOVIE_UPLOAD_STATUS_TABLE_NAME;
+const MEDIA_UPLOAD_STATUS_TABLE = process.env.MEDIA_UPLOAD_STATUS_TABLE_NAME;
 const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET_NAME;
@@ -151,14 +151,14 @@ exports.handler = async (event) => {
                 }
             case "/libraries/{ownerIdentityId}/movies/{movieId}/status":
                 if (httpMethod === "GET") {
-                    return await getMovieUploadStatus(
+                    return await getMediaUploadStatus(
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
                         identityId,
                         requestOrigin
                     );
                 } else if (httpMethod === "POST") {
-                    return await updateMovieUploadStatus(
+                    return await updateMediaUploadStatus(
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.movieId,
@@ -1553,16 +1553,16 @@ async function requestMovie(
     }
 }
 
-// Update movie upload status (only owner can update)
-async function updateMovieUploadStatus(
+// Update media upload status (only owner can update)
+async function updateMediaUploadStatus(
     body,
     ownerIdentityId,
-    movieId,
+    mediaId,
     requestingIdentityId,
     requestOrigin
 ) {
     try {
-        console.log("Updating upload status for movie:", movieId);
+        console.log("Updating upload status for media:", mediaId);
 
         // Validate requesting user owns the content
         if (ownerIdentityId !== requestingIdentityId) {
@@ -1577,9 +1577,20 @@ async function updateMovieUploadStatus(
         }
 
         const requestData = JSON.parse(body);
-        const { percentage, eta, stageName, message } = requestData;
+        const { percentage, eta, stageName, message, mediaType } = requestData;
 
         // Validate required fields
+        if (!mediaType || !["movie", "episode"].includes(mediaType)) {
+            return createResponse(
+                400,
+                {
+                    error: "mediaType is required and must be 'movie' or 'episode'",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
         if (
             typeof percentage !== "number" ||
             percentage < 0 ||
@@ -1611,7 +1622,8 @@ async function updateMovieUploadStatus(
         // Create status record with TTL (expire after 7 days)
         const statusRecord = {
             ownerIdentityId,
-            movieId,
+            mediaId,
+            mediaType,
             percentage,
             stageName,
             updatedAt: currentTime,
@@ -1629,7 +1641,7 @@ async function updateMovieUploadStatus(
         // Save the status record
         await dynamodb.send(
             new PutCommand({
-                TableName: MOVIE_UPLOAD_STATUS_TABLE,
+                TableName: MEDIA_UPLOAD_STATUS_TABLE,
                 Item: statusRecord,
             })
         );
@@ -1660,9 +1672,9 @@ async function updateMovieUploadStatus(
 }
 
 // Get movie upload status (anyone with library access can view)
-async function getMovieUploadStatus(
+async function getMediaUploadStatus(
     ownerIdentityId,
-    movieId,
+    mediaId,
     identityId,
     requestOrigin
 ) {
@@ -1670,8 +1682,8 @@ async function getMovieUploadStatus(
         console.log(
             "Getting upload status for owner:",
             ownerIdentityId,
-            "movie:",
-            movieId,
+            "media:",
+            mediaId,
             "requested by:",
             identityId
         );
@@ -1692,10 +1704,10 @@ async function getMovieUploadStatus(
         // Get the upload status record
         const result = await dynamodb.send(
             new GetCommand({
-                TableName: MOVIE_UPLOAD_STATUS_TABLE,
+                TableName: MEDIA_UPLOAD_STATUS_TABLE,
                 Key: {
                     ownerIdentityId,
-                    movieId,
+                    mediaId,
                 },
             })
         );

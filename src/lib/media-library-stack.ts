@@ -203,16 +203,16 @@ export class MediaLibraryStack extends cdk.Stack {
             projectionType: dynamodb.ProjectionType.ALL,
         });
         // Table for tracking movie upload status
-        const movieUploadStatusTable = new dynamodb.Table(
+        const mediaUploadStatusTable = new dynamodb.Table(
             this,
-            "MovieUploadStatusTable",
+            "MediaUploadStatusTable",
             {
                 partitionKey: {
                     name: "ownerIdentityId",
                     type: dynamodb.AttributeType.STRING,
                 },
                 sortKey: {
-                    name: "movieId",
+                    name: "mediaId",
                     type: dynamodb.AttributeType.STRING,
                 },
                 billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -224,6 +224,18 @@ export class MediaLibraryStack extends cdk.Stack {
                 timeToLiveAttribute: "expiresAt",
             }
         );
+        mediaUploadStatusTable.addGlobalSecondaryIndex({
+            indexName: "MediaTypeIndex",
+            partitionKey: {
+                name: "ownerIdentityId",
+                type: dynamodb.AttributeType.STRING,
+            },
+            sortKey: {
+                name: "mediaType",
+                type: dynamodb.AttributeType.STRING,
+            },
+            projectionType: dynamodb.ProjectionType.ALL,
+        });
 
         /* SQS QUEUE - WORKER COMMANDS */
         // Create SQS queue for worker commands
@@ -739,8 +751,8 @@ export class MediaLibraryStack extends cdk.Stack {
                     PLAYLIST_BUCKET_NAME: playlistBucket.bucketName,
                     MEDIA_BUCKET_NAME: mediaBucket.bucketName,
                     POSTER_BUCKET_NAME: posterBucket.bucketName,
-                    MOVIE_UPLOAD_STATUS_TABLE_NAME:
-                        movieUploadStatusTable.tableName,
+                    MEDIA_UPLOAD_STATUS_TABLE_NAME:
+                        mediaUploadStatusTable.tableName,
                     ALLOWED_ORIGINS: allowedOrigins.join(","),
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
@@ -800,7 +812,7 @@ export class MediaLibraryStack extends cdk.Stack {
         // Grant permissions to the Lambda function
         libraryAccessTable.grantReadWriteData(libraryApiLambda);
         librarySharedTable.grantReadWriteData(libraryApiLambda);
-        movieUploadStatusTable.grantReadWriteData(libraryApiLambda);
+        mediaUploadStatusTable.grantReadWriteData(libraryApiLambda);
         libraryBucket.grantRead(libraryApiLambda);
         playlistBucket.grantReadWrite(libraryApiLambda);
         mediaBucket.grantRead(libraryApiLambda);
@@ -1544,9 +1556,10 @@ export class MediaLibraryStack extends cdk.Stack {
             value: libraryAccessTable.tableName,
             description: "Database table for library access records",
         });
-        new cdk.CfnOutput(this, "MovieUploadStatusTableName", {
-            value: movieUploadStatusTable.tableName,
-            description: "Database table for movie upload status tracking",
+        new cdk.CfnOutput(this, "MediaUploadStatusTableName", {
+            value: mediaUploadStatusTable.tableName,
+            description:
+                "Database table for media upload status tracking (movies and TV episodes)",
         });
         new cdk.CfnOutput(this, "LibraryBucketName", {
             value: libraryBucket.bucketName,
