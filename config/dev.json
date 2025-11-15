@@ -14,7 +14,7 @@
     "awsPlaylistBucketPrefix": "media-library-playlist",
     "awsPosterBucketPrefix": "media-library-poster",
     "frontendRepo": "anuvgupta/media-library-frontend",
-    "moviePreSignedUrlExpiration": 7200,
+    "mediaPreSignedUrlExpiration": 7200,
     "enableFirewall": false,
     "throttlingConfig": {},
     "tags": {

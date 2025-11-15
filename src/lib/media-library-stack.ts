@@ -55,7 +55,7 @@ interface MediaLibraryStackProps extends cdk.StackProps {
     enableFirewall: boolean;
     tmdbEndpoint: string;
     tmdbAccessToken: string;
-    moviePreSignedUrlExpiration: number;
+    mediaPreSignedUrlExpiration: number;
     throttlingConfig: any;
     devWebsiteUsername?: string;
     devWebsitePassword?: string;
@@ -757,7 +757,7 @@ export class MediaLibraryStack extends cdk.Stack {
                     USER_POOL_ID: userPool.userPoolId,
                     IDENTITY_POOL_ID: identityPool.ref,
                     SQS_QUEUE_URL: workerCommandQueue.queueUrl,
-                    MOVIE_PRE_SIGNED_URL_EXPIRATION: `${props.moviePreSignedUrlExpiration}`,
+                    MEDIA_PRE_SIGNED_URL_EXPIRATION: `${props.mediaPreSignedUrlExpiration}`,
                     NODE_OPTIONS: "--max-old-space-size=512",
                 },
             }
@@ -1014,56 +1014,60 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /libraries/{ownerIdentityId}/movies/{movieId}/subtitles - Get movie subtitles
-        const moviesResource = ownerLibraryResource.addResource("movies");
-        const movieResource = moviesResource.addResource("{movieId}");
-        const subtitlesResource = movieResource.addResource("subtitles");
+        // GET /libraries/{ownerIdentityId}/media/{mediaId}/subtitles - Get media subtitles
+        const mediaResource = ownerLibraryResource.addResource("media");
+        const mediaItemResource = mediaResource.addResource("{mediaId}");
+        const subtitlesResource = mediaItemResource.addResource("subtitles");
         subtitlesResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
+                "method.request.querystring.type": false, // Add query parameter for mediaType
             },
         });
-        // GET /libraries/{ownerIdentityId}/movies/{movieId}/playlist - Get movie playlist
-        const playlistResource = movieResource.addResource("playlist");
+        // GET /libraries/{ownerIdentityId}/media/{mediaId}/playlist
+        const playlistResource = mediaItemResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
+                "method.request.querystring.type": false,
             },
         });
+        // POST /libraries/{ownerIdentityId}/media/{mediaId}/playlist/process
         const processPlaylistResource = playlistResource.addResource("process");
         processPlaylistResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
             },
         });
-        const requestResource = movieResource.addResource("request");
+        // POST /libraries/{ownerIdentityId}/media/{mediaId}/request
+        const requestResource = mediaItemResource.addResource("request");
         requestResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
             },
         });
-        // GET/POST /libraries/{ownerIdentityId}/movies/{movieId}/status - Movie upload status
-        const statusResource = movieResource.addResource("status");
+        // GET/POST /libraries/{ownerIdentityId}/media/{mediaId}/status
+        const statusResource = mediaItemResource.addResource("status");
         statusResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
             },
         });
         statusResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
-                "method.request.path.movieId": true,
+                "method.request.path.mediaId": true,
             },
         });
         // POST /libraries/{ownerIdentityId}/share - Share library with another user
@@ -1340,8 +1344,9 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject"],
                 resources: [
-                    // Users can update their own media files using Cognito identity ID
-                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/*`,
+                    // Allow uploading to both movie and episode paths
+                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/media/*/type-movie/*`,
+                    `${mediaBucket.bucketArn}/media/\${cognito-identity.amazonaws.com:sub}/media/*/type-episode/*`,
                 ],
             })
         );
@@ -1350,8 +1355,8 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject", "s3:GetObject"],
                 resources: [
-                    // Users can access & update their own playlist files using Cognito identity ID
-                    `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/*`,
+                    `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/media/*/type-movie/*`,
+                    `${playlistBucket.bucketArn}/playlist/\${cognito-identity.amazonaws.com:sub}/media/*/type-episode/*`,
                 ],
             })
         );
@@ -1360,8 +1365,8 @@ export class MediaLibraryStack extends cdk.Stack {
                 effect: iam.Effect.ALLOW,
                 actions: ["s3:PutObject"],
                 resources: [
-                    // Users can update their own poster files using Cognito identity ID
-                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/*`,
+                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/media/*/type-movie/*`,
+                    `${posterBucket.bucketArn}/poster/\${cognito-identity.amazonaws.com:sub}/media/*/type-episode/*`,
                 ],
             })
         );
@@ -1429,23 +1434,23 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/library"),
                     getApiResource("POST", "libraries/*/refresh"),
                     getApiResource("OPTIONS", "libraries/*/refresh"),
-                    getApiResource("GET", "libraries/*/movies/*/subtitles"),
-                    getApiResource("OPTIONS", "libraries/*/movies/*/subtitles"),
-                    getApiResource("GET", "libraries/*/movies/*/playlist"),
-                    getApiResource("OPTIONS", "libraries/*/movies/*/playlist"),
+                    getApiResource("GET", "libraries/*/media/*/subtitles"),
+                    getApiResource("OPTIONS", "libraries/*/media/*/subtitles"),
+                    getApiResource("GET", "libraries/*/media/*/playlist"),
+                    getApiResource("OPTIONS", "libraries/*/media/*/playlist"),
                     getApiResource(
                         "POST",
-                        "libraries/*/movies/*/playlist/process"
+                        "libraries/*/media/*/playlist/process"
                     ),
                     getApiResource(
                         "OPTIONS",
-                        "libraries/*/movies/*/playlist/process"
+                        "libraries/*/media/*/playlist/process"
                     ),
-                    getApiResource("POST", "libraries/*/movies/*/request"),
-                    getApiResource("OPTIONS", "libraries/*/movies/*/request"),
-                    getApiResource("GET", "libraries/*/movies/*/status"),
-                    getApiResource("POST", "libraries/*/movies/*/status"),
-                    getApiResource("OPTIONS", "libraries/*/movies/*/status"),
+                    getApiResource("POST", "libraries/*/media/*/request"),
+                    getApiResource("OPTIONS", "libraries/*/media/*/request"),
+                    getApiResource("GET", "libraries/*/media/*/status"),
+                    getApiResource("POST", "libraries/*/media/*/status"),
+                    getApiResource("OPTIONS", "libraries/*/media/*/status"),
                     getApiResource("POST", "libraries/*/share"),
                     getApiResource("OPTIONS", "libraries/*/share"),
                     getApiResource("GET", "libraries/*/share"),

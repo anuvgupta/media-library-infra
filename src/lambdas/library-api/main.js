@@ -35,8 +35,8 @@ const LIBRARY_BUCKET = process.env.LIBRARY_BUCKET_NAME;
 const PLAYLIST_BUCKET = process.env.PLAYLIST_BUCKET_NAME;
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET_NAME;
 const SQS_QUEUE_URL = process.env.SQS_QUEUE_URL;
-const MOVIE_PRE_SIGNED_URL_EXPIRATION =
-    process.env.MOVIE_PRE_SIGNED_URL_EXPIRATION;
+const MEDIA_PRE_SIGNED_URL_EXPIRATION =
+    process.env.MEDIA_PRE_SIGNED_URL_EXPIRATION;
 
 // Initialize clients
 const dynamodbClient = new DynamoDBClient({});
@@ -111,49 +111,58 @@ exports.handler = async (event) => {
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/movies/{movieId}/subtitles":
+            case "/libraries/{ownerIdentityId}/media/{mediaId}/subtitles":
                 if (httpMethod === "GET") {
-                    return await getMovieSubtitles(
+                    const subtitlesMediaType =
+                        event.queryStringParameters?.type || "movie";
+                    return await getMediaSubtitles(
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
+                        subtitlesMediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist":
+            case "/libraries/{ownerIdentityId}/media/{mediaId}/playlist":
                 if (httpMethod === "GET") {
-                    return await getMoviePlaylist(
+                    const playlistMediaType =
+                        event.queryStringParameters?.type || "movie";
+                    return await getMediaPlaylist(
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
+                        playlistMediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/movies/{movieId}/playlist/process":
+            case "/libraries/{ownerIdentityId}/media/{mediaId}/playlist/process":
                 if (httpMethod === "POST") {
+                    const requestData = JSON.parse(event.body);
+                    const processMediaType = requestData.mediaType || "movie";
                     return await processPlaylistTemplate(
                         event.body,
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
+                        processMediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/movies/{movieId}/request":
+            case "/libraries/{ownerIdentityId}/media/{mediaId}/request":
                 if (httpMethod === "POST") {
-                    return await requestMovie(
+                    return await requestMedia(
                         event.body,
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/movies/{movieId}/status":
+            case "/libraries/{ownerIdentityId}/media/{mediaId}/status":
                 if (httpMethod === "GET") {
                     return await getMediaUploadStatus(
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
                         identityId,
                         requestOrigin
                     );
@@ -161,7 +170,7 @@ exports.handler = async (event) => {
                     return await updateMediaUploadStatus(
                         event.body,
                         pathParameters.ownerIdentityId,
-                        pathParameters.movieId,
+                        pathParameters.mediaId,
                         identityId,
                         requestOrigin
                     );
@@ -330,14 +339,20 @@ async function getLibraryJson(ownerIdentityId, identityId, requestOrigin) {
     }
 }
 
-async function getMovieSubtitles(
+async function getMediaSubtitles(
     ownerIdentityId,
-    movieId,
+    mediaId,
+    mediaType,
     identityId,
     requestOrigin
 ) {
     try {
-        console.log("Getting subtitles for movie:", movieId);
+        console.log(
+            "Getting subtitles for media:",
+            mediaId,
+            "type:",
+            mediaType
+        );
 
         // Check if user has access to this library
         const hasAccess = await checkLibraryAccess(ownerIdentityId, identityId);
@@ -355,7 +370,7 @@ async function getMovieSubtitles(
         // List subtitle files in S3
         const listParams = {
             Bucket: MEDIA_BUCKET,
-            Prefix: `media/${ownerIdentityId}/movie/${movieId}/subtitles/`,
+            Prefix: `media/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/subtitles/`,
             MaxKeys: 100,
         };
 
@@ -386,7 +401,7 @@ async function getMovieSubtitles(
 
                 const url = await getSignedUrl(s3, command, {
                     expiresIn: Math.floor(
-                        Number(MOVIE_PRE_SIGNED_URL_EXPIRATION)
+                        Number(MEDIA_PRE_SIGNED_URL_EXPIRATION)
                     ),
                 });
 
@@ -406,7 +421,7 @@ async function getMovieSubtitles(
             requestOrigin
         );
     } catch (error) {
-        console.error("Error getting movie subtitles:", error);
+        console.error("Error getting media subtitles:", error);
         return createResponse(
             500,
             { error: "Failed to get subtitles" },
@@ -416,10 +431,11 @@ async function getMovieSubtitles(
     }
 }
 
-// Get playlist for a specific movie
-async function getMoviePlaylist(
+// Get playlist for a specific media
+async function getMediaPlaylist(
     ownerIdentityId,
-    movieId,
+    mediaId,
+    mediaType,
     identityId,
     requestOrigin
 ) {
@@ -427,8 +443,8 @@ async function getMoviePlaylist(
         console.log(
             "Getting playlist for owner:",
             ownerIdentityId,
-            "movie:",
-            movieId,
+            "media:",
+            mediaId,
             "requested by:",
             identityId
         );
@@ -447,7 +463,7 @@ async function getMoviePlaylist(
         }
 
         // First, check if template playlist exists to determine segment count
-        const templatePlaylistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist-template.m3u8`;
+        const templatePlaylistKey = `playlist/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/playlist-template.m3u8`;
 
         let templatePlaylist;
         try {
@@ -463,7 +479,7 @@ async function getMoviePlaylist(
                 return createResponse(
                     404,
                     {
-                        error: "Movie not found or not yet processed",
+                        error: "Media not found or not yet processed",
                     },
                     "application/json",
                     requestOrigin
@@ -481,7 +497,7 @@ async function getMoviePlaylist(
         // Check how many segments are actually uploaded to S3
         const listParams = {
             Bucket: MEDIA_BUCKET,
-            Prefix: `media/${ownerIdentityId}/movie/${movieId}/segments/`,
+            Prefix: `media/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/segments/`,
             MaxKeys: 1000,
         };
 
@@ -504,7 +520,7 @@ async function getMoviePlaylist(
         const reprocessResult = await processPlaylistTemplate(
             reprocessBody,
             ownerIdentityId,
-            movieId,
+            mediaId,
             ownerIdentityId, // Use owner's identity for processing
             requestOrigin
         );
@@ -523,7 +539,7 @@ async function getMoviePlaylist(
         }
 
         // Now get the freshly processed playlist
-        const playlistFileKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
+        const playlistFileKey = `playlist/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/playlist.m3u8`;
 
         // Generate pre-signed URL for the playlist file
         const command = new GetObjectCommand({
@@ -532,7 +548,7 @@ async function getMoviePlaylist(
         });
 
         const presignedUrl = await getSignedUrl(s3, command, {
-            expiresIn: Math.floor(Number(`${MOVIE_PRE_SIGNED_URL_EXPIRATION}`)),
+            expiresIn: Math.floor(Number(`${MEDIA_PRE_SIGNED_URL_EXPIRATION}`)),
         });
 
         return createResponse(
@@ -1153,12 +1169,18 @@ async function getLibraryAccess(
 async function processPlaylistTemplate(
     body,
     ownerIdentityId,
-    movieId,
+    mediaId,
+    mediaType,
     requestingIdentityId,
     requestOrigin
 ) {
     try {
-        console.log("Processing playlist template for movie:", movieId);
+        console.log(
+            "Processing playlist template for media:",
+            mediaId,
+            "type:",
+            mediaType
+        );
 
         // Validate requesting user owns the content
         if (ownerIdentityId !== requestingIdentityId) {
@@ -1178,7 +1200,7 @@ async function processPlaylistTemplate(
         const startTime = Date.now();
 
         // Get the template playlist
-        const templateKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist-template.m3u8`;
+        const templateKey = `playlist/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/playlist-template.m3u8`;
 
         let templatePlaylist;
         try {
@@ -1204,7 +1226,7 @@ async function processPlaylistTemplate(
         }
 
         // Try to get existing processed playlist to reuse valid URLs
-        const finalPlaylistKey = `playlist/${ownerIdentityId}/movie/${movieId}/playlist.m3u8`;
+        const finalPlaylistKey = `playlist/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/playlist.m3u8`;
         let existingPlaylist = null;
         let existingSegmentUrls = new Map(); // filename -> {url, lineIndex}
 
@@ -1342,7 +1364,7 @@ async function processPlaylistTemplate(
                 );
 
                 const batchPromises = batch.map(async ({ filename }) => {
-                    const segmentKey = `media/${ownerIdentityId}/movie/${movieId}/segments/${filename}`;
+                    const segmentKey = `media/${ownerIdentityId}/media/${mediaId}/type-${mediaType}/segments/${filename}`;
 
                     const command = new GetObjectCommand({
                         Bucket: MEDIA_BUCKET,
@@ -1351,7 +1373,7 @@ async function processPlaylistTemplate(
 
                     const url = await getSignedUrl(s3, command, {
                         expiresIn: Math.floor(
-                            Number(MOVIE_PRE_SIGNED_URL_EXPIRATION)
+                            Number(MEDIA_PRE_SIGNED_URL_EXPIRATION)
                         ),
                     });
 
@@ -1421,7 +1443,8 @@ async function processPlaylistTemplate(
             Body: processedPlaylist,
             ContentType: "application/vnd.apple.mpegurl",
             Metadata: {
-                movieId: movieId,
+                mediaId: mediaId,
+                mediaType: mediaType,
                 segmentCount: segmentCount.toString(),
                 totalSegments: totalSegments.toString(),
                 isComplete: isComplete.toString(),
@@ -1480,19 +1503,36 @@ async function processPlaylistTemplate(
     }
 }
 
-async function requestMovie(
+async function requestMedia(
     body,
     ownerIdentityId,
-    movieId,
+    mediaId,
     requestingIdentityId,
     requestOrigin
 ) {
     try {
+        const requestData = JSON.parse(body);
+        const { mediaType } = requestData;
+
+        // Validate mediaType
+        if (!mediaType || !["movie", "episode"].includes(mediaType)) {
+            return createResponse(
+                400,
+                {
+                    error: "mediaType is required and must be 'movie' or 'episode'",
+                },
+                "application/json",
+                requestOrigin
+            );
+        }
+
         console.log(
-            "Processing movie request for owner:",
+            "Processing media request for owner:",
             ownerIdentityId,
-            "movie:",
-            movieId,
+            "media:",
+            mediaId,
+            "type:",
+            mediaType,
             "requested by:",
             requestingIdentityId
         );
@@ -1515,9 +1555,10 @@ async function requestMovie(
 
         // Send SQS message
         const message = {
-            command: "upload-movie",
+            command: "upload-media",
             identityId: ownerIdentityId,
-            movieId: movieId,
+            mediaId: mediaId,
+            mediaType: mediaType,
         };
 
         const sqsParams = {
@@ -1527,20 +1568,20 @@ async function requestMovie(
 
         await sqs.send(new SendMessageCommand(sqsParams));
 
-        console.log("Movie upload request sent to SQS queue");
+        console.log("Media upload request sent to SQS queue");
 
         return createResponse(
             200,
             {
-                message: "Movie upload request submitted successfully",
-                movieId: movieId,
+                message: "Media upload request submitted successfully",
+                mediaId: mediaId,
                 ownerIdentityId: ownerIdentityId,
             },
             "application/json",
             requestOrigin
         );
     } catch (error) {
-        console.error("Error requesting movie:", error);
+        console.error("Error requesting media:", error);
         return createResponse(
             500,
             {
@@ -1671,7 +1712,7 @@ async function updateMediaUploadStatus(
     }
 }
 
-// Get movie upload status (anyone with library access can view)
+// Get media upload status (anyone with library access can view)
 async function getMediaUploadStatus(
     ownerIdentityId,
     mediaId,
