@@ -1014,64 +1014,69 @@ export class MediaLibraryStack extends cdk.Stack {
                 "method.request.path.ownerIdentityId": true,
             },
         });
-        // GET /libraries/{ownerIdentityId}/media/{mediaId}/subtitles - Get media subtitles
         const mediaResource = ownerLibraryResource.addResource("media");
-        const mediaItemResource = mediaResource.addResource("{mediaId}");
+        // Add 'type' as a fixed segment
+        const typeSegment = mediaResource.addResource("type");
+        const mediaTypeResource = typeSegment.addResource("{mediaType}");
+        // Add 'id' as a fixed segment
+        const idSegment = mediaTypeResource.addResource("id");
+        const mediaItemResource = idSegment.addResource("{mediaId}");
+        // GET /libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/subtitles
         const subtitlesResource = mediaItemResource.addResource("subtitles");
         subtitlesResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
-        // GET /libraries/{ownerIdentityId}/media/{mediaId}/playlist
+        // GET /libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/playlist
         const playlistResource = mediaItemResource.addResource("playlist");
         playlistResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
-        // POST /libraries/{ownerIdentityId}/media/{mediaId}/playlist/process
+        // POST /libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/playlist/process
         const processPlaylistResource = playlistResource.addResource("process");
         processPlaylistResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
-        // POST /libraries/{ownerIdentityId}/media/{mediaId}/request
+        // POST /libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/request
         const requestResource = mediaItemResource.addResource("request");
         requestResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
-        // GET/POST /libraries/{ownerIdentityId}/media/{mediaId}/status
+        // GET/POST /libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/status
         const statusResource = mediaItemResource.addResource("status");
         statusResource.addMethod("GET", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
         statusResource.addMethod("POST", libraryApiIntegration, {
             authorizationType: apigateway.AuthorizationType.IAM,
             requestParameters: {
                 "method.request.path.ownerIdentityId": true,
+                "method.request.path.mediaType": true,
                 "method.request.path.mediaId": true,
-                "method.request.querystring.mediaType": false,
             },
         });
         // POST /libraries/{ownerIdentityId}/share - Share library with another user
@@ -1438,23 +1443,50 @@ export class MediaLibraryStack extends cdk.Stack {
                     getApiResource("OPTIONS", "libraries/*/library"),
                     getApiResource("POST", "libraries/*/refresh"),
                     getApiResource("OPTIONS", "libraries/*/refresh"),
-                    getApiResource("GET", "libraries/*/media/*/subtitles"),
-                    getApiResource("OPTIONS", "libraries/*/media/*/subtitles"),
-                    getApiResource("GET", "libraries/*/media/*/playlist"),
-                    getApiResource("OPTIONS", "libraries/*/media/*/playlist"),
                     getApiResource(
-                        "POST",
-                        "libraries/*/media/*/playlist/process"
+                        "GET",
+                        "libraries/*/media/type/*/id/*/subtitles"
                     ),
                     getApiResource(
                         "OPTIONS",
-                        "libraries/*/media/*/playlist/process"
+                        "libraries/*/media/type/*/id/*/subtitles"
                     ),
-                    getApiResource("POST", "libraries/*/media/*/request"),
-                    getApiResource("OPTIONS", "libraries/*/media/*/request"),
-                    getApiResource("GET", "libraries/*/media/*/status"),
-                    getApiResource("POST", "libraries/*/media/*/status"),
-                    getApiResource("OPTIONS", "libraries/*/media/*/status"),
+                    getApiResource(
+                        "GET",
+                        "libraries/*/media/type/*/id/*/playlist"
+                    ),
+                    getApiResource(
+                        "OPTIONS",
+                        "libraries/*/media/type/*/id/*/playlist"
+                    ),
+                    getApiResource(
+                        "POST",
+                        "libraries/*/media/type/*/id/*/playlist/process"
+                    ),
+                    getApiResource(
+                        "OPTIONS",
+                        "libraries/*/media/type/*/id/*/playlist/process"
+                    ),
+                    getApiResource(
+                        "POST",
+                        "libraries/*/media/type/*/id/*/request"
+                    ),
+                    getApiResource(
+                        "OPTIONS",
+                        "libraries/*/media/type/*/id/*/request"
+                    ),
+                    getApiResource(
+                        "GET",
+                        "libraries/*/media/type/*/id/*/status"
+                    ),
+                    getApiResource(
+                        "POST",
+                        "libraries/*/media/type/*/id/*/status"
+                    ),
+                    getApiResource(
+                        "OPTIONS",
+                        "libraries/*/media/type/*/id/*/status"
+                    ),
                     getApiResource("POST", "libraries/*/share"),
                     getApiResource("OPTIONS", "libraries/*/share"),
                     getApiResource("GET", "libraries/*/share"),

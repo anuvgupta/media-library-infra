@@ -111,64 +111,54 @@ exports.handler = async (event) => {
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/media/{mediaId}/subtitles":
+            case "/libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/subtitles":
                 if (httpMethod === "GET") {
-                    const subtitlesMediaType =
-                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaSubtitles(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
-                        subtitlesMediaType,
+                        pathParameters.mediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/media/{mediaId}/playlist":
+            case "/libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/playlist":
                 if (httpMethod === "GET") {
-                    const playlistMediaType =
-                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaPlaylist(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
-                        playlistMediaType,
+                        pathParameters.mediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/media/{mediaId}/playlist/process":
+            case "/libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/playlist/process":
                 if (httpMethod === "POST") {
-                    const requestData = JSON.parse(event.body);
-                    const processMediaType = requestData.mediaType || "movie";
                     return await processPlaylistTemplate(
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
-                        processMediaType,
+                        pathParameters.mediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/media/{mediaId}/request":
+            case "/libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/request":
                 if (httpMethod === "POST") {
-                    const requestMediaType =
-                        event.queryStringParameters?.mediaType || "movie";
                     return await requestMedia(
                         event.body,
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
-                        requestMediaType,
+                        pathParameters.mediaType,
                         identityId,
                         requestOrigin
                     );
                 }
-            case "/libraries/{ownerIdentityId}/media/{mediaId}/status":
+            case "/libraries/{ownerIdentityId}/media/type/{mediaType}/id/{mediaId}/status":
                 if (httpMethod === "GET") {
-                    const statusMediaType =
-                        event.queryStringParameters?.mediaType || "movie";
                     return await getMediaUploadStatus(
                         pathParameters.ownerIdentityId,
                         pathParameters.mediaId,
-                        statusMediaType,
+                        pathParameters.mediaType,
                         identityId,
                         requestOrigin
                     );
